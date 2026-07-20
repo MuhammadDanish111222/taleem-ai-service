@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
+    FIREBASE_ADMIN_PROJECT_ID: str = ""
+    FIREBASE_ADMIN_CLIENT_EMAIL: str = ""
+    FIREBASE_ADMIN_PRIVATE_KEY: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
