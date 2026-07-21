@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Header
 from typing import Optional
 from app.core.config import Settings, get_settings
-from app.core.security import verify_firebase_token
+from app.core.internal_auth import verify_internal_jwt
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ async def readiness_check(authorization: Optional[str] = Header(None)):
     uid = None
     if authorization:
         try:
-            auth_context = verify_firebase_token(authorization)
+            auth_context = verify_internal_jwt(authorization)
             uid = auth_context.uid
             logger.info(f"Readiness check called with token for uid: {uid}")
         except Exception as e:

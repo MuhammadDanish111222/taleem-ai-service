@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     FIREBASE_ADMIN_PROJECT_ID: str = ""
     FIREBASE_ADMIN_CLIENT_EMAIL: str = ""
     FIREBASE_ADMIN_PRIVATE_KEY: str = ""
+    INTERNAL_JWT_PUBLIC_KEYS_JSON: str = "{}"
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(
         env_file=".env",
