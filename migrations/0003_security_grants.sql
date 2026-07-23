@@ -40,3 +40,7 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC, anon, authenticated;
 
 -- 5. Revoke execute on all functions from public, anon, and authenticated
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- 6. Grant USAGE on schema public so table-level RLS privilege checks (42501) are reached
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
