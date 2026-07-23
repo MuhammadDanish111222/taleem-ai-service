@@ -20,6 +20,12 @@ mock_redis.set.return_value = True
 patch('app.core.internal_auth.get_redis', return_value=mock_redis).start()
 patch('app.core.internal_auth.get_public_keys', return_value={key_id: public_pem}).start()
 
+os.environ.setdefault("POSTGRES_SERVER", "localhost")
+os.environ.setdefault("POSTGRES_USER", "postgres")
+os.environ.setdefault("POSTGRES_PASSWORD", "postgres")
+os.environ.setdefault("POSTGRES_DB", "taleem_ai")
+os.environ.setdefault("REDIS_HOST", "localhost")
+
 import socket
 import asyncio
 
