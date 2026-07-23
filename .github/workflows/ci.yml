@@ -124,6 +124,8 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: uv sync
+      - name: Run database migrations
+        run: uv run python scripts/migrate.py
       - name: Test worker process startup and graceful shutdown
         run: |
           uv run python -m app.workers.main &
