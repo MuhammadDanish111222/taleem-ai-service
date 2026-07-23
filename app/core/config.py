@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     FIREBASE_ADMIN_PRIVATE_KEY: str = ""
     INTERNAL_JWT_PUBLIC_KEYS_JSON: str = "{}"
     REDIS_URL: str = "redis://localhost:6379/0"
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
 
     model_config = SettingsConfigDict(
         env_file=".env",
