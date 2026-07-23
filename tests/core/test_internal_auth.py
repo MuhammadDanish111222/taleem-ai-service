@@ -115,7 +115,7 @@ def test_wrong_signature(mock_keys, mock_redis):
         verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
 
-@pytest.mark.parametrize("claim_name", ["uid", "admin", "feature", "request_id", "jti"])
+@pytest.mark.parametrize("claim_name", ["uid", "admin", "feature", "request_id", "jti", "iat", "exp"])
 def test_missing_mandatory_claims(mock_keys, mock_redis, claim_name):
     now = int(time.time())
     payload = {
@@ -135,6 +135,34 @@ def test_missing_mandatory_claims(mock_keys, mock_redis, claim_name):
     with pytest.raises(HTTPException) as exc_info:
         verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
+
+def test_non_boolean_admin_claim(mock_keys, mock_redis):
+    token = create_token(admin="true")  # String instead of bool
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_jwt(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+    assert "admin" in str(exc_info.value.detail["message"])
+
+def test_empty_feature_claim(mock_keys, mock_redis):
+    token = create_token(feature="")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_jwt(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+    assert "feature" in str(exc_info.value.detail["message"])
+
+def test_empty_request_id_claim(mock_keys, mock_redis):
+    token = create_token(request_id="")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_jwt(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+    assert "request_id" in str(exc_info.value.detail["message"])
+
+def test_empty_jti_claim(mock_keys, mock_redis):
+    token = create_token(jti="")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_jwt(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+    assert "jti" in str(exc_info.value.detail["message"])
 
 def test_replayed_jti(mock_keys, mock_redis):
     # Set returns None when key already exists
