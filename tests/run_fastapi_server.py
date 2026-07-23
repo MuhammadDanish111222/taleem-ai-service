@@ -33,6 +33,7 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 sock.bind(("0.0.0.0", port))
 sock.listen(128)
+sock.setblocking(False)
 actual_port = sock.getsockname()[1]
 print(f"SERVER_STARTED_PORT:{actual_port}", flush=True)
 
