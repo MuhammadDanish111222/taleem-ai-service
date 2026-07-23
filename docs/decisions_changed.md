@@ -22,3 +22,20 @@ This document logs significant architectural decisions and changes made for the 
 - **Change Details:**
   - `taleem-ai-service` exclusively holds `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, and `DEEPSEEK_API_KEY`.
   - Browser and `taleem-web` clients are strictly prohibited from receiving or using Supabase credentials.
+
+## Phase 3A: RAG Foundation & Database Schema
+- **Decision:** Raw SQL + Asyncpg for Database Repositories.
+- **Change Details:**
+  - Standardized on explicit SQL queries via `asyncpg` for all database interactions. No ORMs (SQLAlchemy / Supabase-py) allowed across any phase.
+- **Decision:** PL/pgSQL Guarded Role Creation in Migration `0003_security_grants.sql`.
+- **Change Details:**
+  - Guarded `CREATE ROLE anon` and `CREATE ROLE authenticated` using PL/pgSQL `IF NOT EXISTS` checks to ensure migrations run safely and idempotently on both bare CI databases and hosted Supabase environments.
+- **Decision:** Schema-Level Active Version Uniqueness.
+- **Change Details:**
+  - Added partial unique index `CREATE UNIQUE INDEX idx_rag_corpus_versions_active_scope ON rag_corpus_versions (corpus_id) WHERE status = 'active';` to enforce max 1 active version per corpus scope at the database level.
+- **Decision:** Language-Aware Lexical Search Configuration (`simple`).
+- **Change Details:**
+  - `rag_chunks` generates a stored `content_tsvector` using PostgreSQL's `'simple'` search config to support Urdu, English, and Roman Urdu without inappropriate English stemming.
+- **Decision:** Deferred HNSW Indexing.
+- **Change Details:**
+  - Documented exact vector search at MVP volumes and set 500,000 vectors as the trigger for introducing HNSW index.

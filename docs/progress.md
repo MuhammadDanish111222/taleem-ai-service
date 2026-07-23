@@ -14,7 +14,16 @@ This document serves as a persistent record of the progress made on the Python-b
   - Built Redis-backed JTI replay protection (`jti` nonce store) to reject replayed tokens.
   - Implemented FastAPI security dependencies (`require_internal_jwt`, `require_admin_jwt`).
   - Added health endpoint (`/api/v1/health`) and CI workflow (`.github/workflows/taleem-ai-service-ci.yml`).
+
+## Phase 3A: RAG Foundation & Database Schema
+- **Status:** Completed
+- **Details:**
+  - Configured dependencies: `asyncpg` and `pgvector` added to `pyproject.toml`.
+  - Built migration scripts: `migrations/0001_platform_core.sql`, `migrations/0002_rag_schema.sql`, `migrations/0003_security_grants.sql`.
+  - Built lightweight migration runner `app/db/migrator.py` and connection pool lifecycle `app/db/pool.py`.
+  - Created typed Asyncpg repository modules: `JobRepository`, `RagRepository`, `AIRequestRepository`, and `AuditRepository`.
+  - Applied schema-level active version uniqueness constraint, CHECK constraints on all status/progress/count fields, ON DELETE CASCADE/SET NULL foreign keys, and RLS deny-by-default grants with PL/pgSQL role protection.
+  - Documented complete database architecture in `docs/architecture.md`.
 - **Verification Performed:**
-  - `uv run python -m pytest tests/core/test_internal_auth.py` passed 100% (7/7 tests verifying missing token, expired token, wrong audience, wrong signature, missing claims, replayed JTI, and valid token access).
-  - `uv run python scripts/smoke_test.py` passed.
-  - `python -m compileall app` passed cleanly with 0 syntax errors.
+  - Executed automated integration test suite (`tests/test_db_schema_rls.py`, `tests/test_repositories.py`) against PostgreSQL 17 + pgvector.
+  - Verified 100% test pass rate across 3 consecutive pytest runs.
