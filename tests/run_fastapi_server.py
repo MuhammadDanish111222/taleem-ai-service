@@ -23,4 +23,4 @@ patch('app.core.internal_auth.get_public_keys', return_value={key_id: public_pem
 from app.main import app
 import uvicorn
 
-uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
+uvicorn.run(app, host="0.0.0.0", port=port, log_level="error")
