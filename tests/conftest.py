@@ -1,11 +1,10 @@
-"""Pytest global configuration and database fixtures."""
-
+import os
 import asyncio
 import pytest
 import asyncpg
 from app.db.migrator import run_migrations
 
-DB_URL = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
 
 async def _ensure_migrated():
     conn = await asyncpg.connect(DB_URL)

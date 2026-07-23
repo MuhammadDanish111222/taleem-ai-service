@@ -1,5 +1,6 @@
 """Tests for Worker Runtime: Concurrency, Lock Ownership, Stale Recovery, Crash Idempotency, and Unsupported Job Handling."""
 
+import os
 import pytest
 import asyncio
 import asyncpg
@@ -7,7 +8,7 @@ from app.repositories.job_repository import JobRepository
 from app.services.jobs.queue import JobQueueService
 from app.workers.main import Worker, register_handler, HANDLERS
 
-DB_URL = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
 
 @pytest.fixture
 async def db_conn():
