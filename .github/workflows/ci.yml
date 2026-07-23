@@ -126,7 +126,7 @@ jobs:
         run: uv sync
       - name: Test worker process startup and graceful shutdown
         run: |
-          uv run python app/worker/main.py &
+          uv run python app/workers/main.py &
           WORKER_PID=$!
           sleep 3
           kill -TERM $WORKER_PID

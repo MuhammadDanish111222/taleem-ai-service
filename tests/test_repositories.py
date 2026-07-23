@@ -3,11 +3,11 @@
 import os
 import pytest
 import asyncpg
-from app.db.repositories.job_repository import JobRepository
-from app.db.repositories.rag_repository import RagRepository
-from app.db.repositories.ai_request_repository import AiRequestRepository
-from app.db.repositories.audit_repository import AuditRepository
-from app.db.repositories.provider_attempt_repository import ProviderAttemptRepository
+from app.repositories.job_repository import JobRepository
+from app.repositories.rag_repository import RagRepository
+from app.repositories.ai_request_repository import AIRequestRepository
+from app.repositories.audit_repository import AuditRepository
+from app.repositories.provider_attempt_repository import ProviderAttemptRepository
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
 
