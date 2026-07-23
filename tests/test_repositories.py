@@ -12,6 +12,7 @@ DB_URL = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
 @pytest.fixture
 async def db_conn():
     connection = await asyncpg.connect(DB_URL)
+    await connection.execute("SET search_path = public, pg_catalog;")
     transaction = connection.transaction()
     await transaction.start()
     try:
@@ -19,6 +20,7 @@ async def db_conn():
     finally:
         await transaction.rollback()
         await connection.close()
+
 
 @pytest.mark.asyncio
 async def test_job_repository_lifecycle(db_conn):

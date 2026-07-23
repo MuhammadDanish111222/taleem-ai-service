@@ -9,6 +9,7 @@ DB_URL = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
 @pytest.fixture
 async def conn():
     connection = await asyncpg.connect(DB_URL)
+    await connection.execute("SET search_path = public, pg_catalog;")
     transaction = connection.transaction()
     await transaction.start()
     try:
@@ -16,6 +17,7 @@ async def conn():
     finally:
         await transaction.rollback()
         await connection.close()
+
 
 @pytest.mark.asyncio
 async def test_migrations_execution_and_idempotency():
