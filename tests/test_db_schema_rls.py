@@ -19,18 +19,14 @@ async def conn():
 
 @pytest.mark.asyncio
 async def test_migrations_execution_and_idempotency():
-    """Verifies that all SQL migrations execute cleanly and are idempotent."""
+    """Verifies that all SQL migrations are recorded and subsequent runs are idempotent."""
     connection = await asyncpg.connect(DB_URL)
     try:
-        # Run migrations
-        applied_first = await run_migrations(connection)
-        assert isinstance(applied_first, list)
-        
-        # Second run should apply 0 new migrations
+        # Subsequent run should apply 0 new migrations
         applied_second = await run_migrations(connection)
         assert applied_second == []
         
-        # Verify schema_migrations table
+        # Verify schema_migrations table contains all 3 migrations
         rows = await connection.fetch("SELECT version FROM schema_migrations ORDER BY version;")
         versions = [r["version"] for r in rows]
         assert "0001_platform_core.sql" in versions
@@ -38,6 +34,7 @@ async def test_migrations_execution_and_idempotency():
         assert "0003_security_grants.sql" in versions
     finally:
         await connection.close()
+
 
 @pytest.mark.asyncio
 async def test_job_queue_check_constraints(conn):
@@ -151,6 +148,9 @@ async def test_rls_deny_by_default_grants():
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
             await anon_conn.fetch("SELECT * FROM rag_chunks;")
         assert exc_info.value.sqlstate == "42501"
+        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+            await anon_conn.fetch("SELECT * FROM provider_attempts;")
+        assert exc_info.value.sqlstate == "42501"
     finally:
         await anon_conn.close()
 
@@ -164,7 +164,32 @@ async def test_rls_deny_by_default_grants():
         assert exc_info.value.sqlstate == "42501"
         
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+            await auth_conn.fetch("SELECT * FROM provider_attempts;")
+        assert exc_info.value.sqlstate == "42501"
+
+        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
             await auth_conn.fetch("SELECT * FROM admin_audit_logs;")
         assert exc_info.value.sqlstate == "42501"
     finally:
         await auth_conn.close()
+
+@pytest.mark.asyncio
+async def test_provider_attempts_check_constraints(conn):
+    """Verifies CHECK constraints on provider_attempts table."""
+    with pytest.raises(asyncpg.CheckViolationError):
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO provider_attempts (provider, model, status, prompt_tokens)
+                VALUES ('openai', 'gpt-4o', 'success', -10);
+                """
+            )
+    with pytest.raises(asyncpg.CheckViolationError):
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO provider_attempts (provider, model, status)
+                VALUES ('openai', 'gpt-4o', 'invalid_status');
+                """
+            )
+

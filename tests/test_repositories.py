@@ -178,3 +178,27 @@ async def test_audit_repository(db_conn):
     logs = await repo.get_audit_logs(actor_id="admin_user_99")
     assert len(logs) >= 1
     assert logs[0]["target_id"] == "cv_12345"
+
+@pytest.mark.asyncio
+async def test_provider_attempt_repository(db_conn):
+    """Tests recording and querying provider attempts."""
+    from app.repositories.provider_attempt_repository import ProviderAttemptRepository
+    repo = ProviderAttemptRepository(db_conn)
+    
+    attempt = await repo.record_attempt(
+        provider="deepseek",
+        model="deepseek-chat",
+        status="success",
+        attempt_no=1,
+        provider_request_id="req_ds_001",
+        system_fingerprint="fp_123",
+        finish_reason="stop",
+        prompt_tokens=150,
+        completion_tokens=80,
+        latency_ms=420,
+        trace_id="tr_abc_789"
+    )
+    assert attempt["provider"] == "deepseek"
+    assert attempt["status"] == "success"
+    assert attempt["trace_id"] == "tr_abc_789"
+

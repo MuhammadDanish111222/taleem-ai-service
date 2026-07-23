@@ -86,3 +86,30 @@ CREATE TABLE IF NOT EXISTS ai_answers (
     latency_ms INT NOT NULL DEFAULT 0 CHECK (latency_ms >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Provider Attempts Table (tracks every external LLM/embedding API call)
+CREATE TABLE IF NOT EXISTS provider_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ai_request_id UUID NULL REFERENCES ai_requests(id) ON DELETE SET NULL,
+    job_id UUID NULL REFERENCES job_queue(id) ON DELETE SET NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    attempt_no INT NOT NULL DEFAULT 1 CHECK (attempt_no > 0),
+    provider_request_id TEXT NULL,
+    system_fingerprint TEXT NULL,
+    finish_reason TEXT NULL,
+    prompt_tokens INT NOT NULL DEFAULT 0 CHECK (prompt_tokens >= 0),
+    cache_tokens INT NOT NULL DEFAULT 0 CHECK (cache_tokens >= 0),
+    reasoning_tokens INT NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0),
+    completion_tokens INT NOT NULL DEFAULT 0 CHECK (completion_tokens >= 0),
+    latency_ms INT NOT NULL DEFAULT 0 CHECK (latency_ms >= 0),
+    status TEXT NOT NULL CHECK (status IN ('retryable_error', 'non_retryable_error', 'success')),
+    error_code TEXT NULL,
+    trace_id TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_attempts_ai_request ON provider_attempts (ai_request_id) WHERE ai_request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_provider_attempts_job ON provider_attempts (job_id) WHERE job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_provider_attempts_trace ON provider_attempts (trace_id) WHERE trace_id IS NOT NULL;
+

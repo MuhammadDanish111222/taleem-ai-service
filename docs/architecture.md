@@ -23,6 +23,8 @@ This document provides the definitive architectural design, database schema spec
 3. **`admin_audit_logs`**: Immutable audit logs capturing administrative mutations (`actor_id`, `action`, `target_type`, `target_id`, `before_value`, `after_value`).
 4. **`ai_requests`**: Log of user AI interactions. Contains MVP v1 cache composite key columns (`board_id`, `class_id`, `subject_id`, `language`, `answer_mode`, `normalized_question`, `question_hash`, `prompt_version`, `corpus_version_id`).
 5. **`ai_answers`**: Generated AI answers joined 1:1 with `ai_requests`. Contains MVP v1 score columns (`chunk_text_score`, `expected_question_score`).
+6. **`provider_attempts`**: Individual external LLM/embedding API call log (`ai_request_id`, `job_id`, `provider`, `model`, `attempt_no`, `provider_request_id`, `system_fingerprint`, `finish_reason`, `prompt_tokens`, `cache_tokens`, `reasoning_tokens`, `completion_tokens`, `latency_ms`, `status`, `error_code`, `trace_id`).
+
 
 ### RAG Schema Tables (`0002_rag_schema.sql`)
 1. **`rag_corpora`**: Unique scope mapping for textbook corpora (`board_id`, `class_id`, `subject_id`).
