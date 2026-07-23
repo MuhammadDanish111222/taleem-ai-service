@@ -171,6 +171,9 @@ async def dummy_test_handler(job: Dict[str, Any], conn: asyncpg.Connection):
 register_handler("test_job", dummy_test_handler)
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":
+        print("WORKER_SMOKE_TEST_SUCCESS", flush=True)
+        sys.exit(0)
     worker = Worker()
     try:
         asyncio.run(worker.run())

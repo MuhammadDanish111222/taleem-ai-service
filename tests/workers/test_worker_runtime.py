@@ -173,3 +173,140 @@ async def test_unsupported_job_type_handling(db_conn):
     assert failed_job["status"] == "failed"
     assert failed_job["error_code"] == "UNSUPPORTED_JOB_TYPE"
     assert failed_job["attempt_count"] == 1
+
+@pytest.mark.asyncio
+async def test_job_retry_backoff(db_conn):
+    """Point 6: Verify job with remaining attempts goes into retry_wait with backoff."""
+    service = JobQueueService(db_conn)
+    job = await service.enqueue_job("retry_test_job", {"data": 1}, max_attempts=3)
+    job_id = str(job["id"])
+
+    leased = await service.lease_next_job("worker_1", ["retry_test_job"])
+    assert leased["attempt_count"] == 1
+
+    # Fail with 5 second retry delay
+    fail_ok = await service.fail_job(job_id, "worker_1", "TRANSIENT_ERR", "Temporary failure", retry_delay_seconds=5)
+    assert fail_ok is True
+
+    retrying_job = await service.get_job(job_id)
+    assert retrying_job["status"] == "retry_wait"
+    assert retrying_job["locked_by"] is None
+    assert retrying_job["error_code"] == "TRANSIENT_ERR"
+    assert retrying_job["next_retry_at"] is not None
+
+@pytest.mark.asyncio
+async def test_job_attempt_exhaustion(db_conn):
+    """Point 6: Verify job reaching max_attempts terminally fails."""
+    service = JobQueueService(db_conn)
+    job = await service.enqueue_job("exhaustion_test_job", {"data": 1}, max_attempts=1)
+    job_id = str(job["id"])
+
+    leased = await service.lease_next_job("worker_1", ["exhaustion_test_job"])
+    assert leased["attempt_count"] == 1
+
+    # Fail job when attempt 1 == max_attempts 1
+    fail_ok = await service.fail_job(job_id, "worker_1", "PERMANENT_ERR", "Permanent failure", retry_delay_seconds=5)
+    assert fail_ok is True
+
+    failed_job = await service.get_job(job_id)
+    assert failed_job["status"] == "failed"
+    assert failed_job["error_code"] == "PERMANENT_ERR"
+    assert failed_job["completed_at"] is not None
+
+@pytest.mark.asyncio
+async def test_stale_recovery_attempt_exhaustion(db_conn):
+    """Point 6: Verify stale lease recovery terminally fails jobs when max_attempts reached."""
+    service = JobQueueService(db_conn)
+    job = await service.enqueue_job("stale_exhaustion_job", {"data": 1}, max_attempts=1)
+    job_id = str(job["id"])
+
+    leased = await service.lease_next_job("worker_1", ["stale_exhaustion_job"])
+    assert leased["attempt_count"] == 1
+
+    # Simulate worker crash (stale heartbeat timestamp)
+    await db_conn.execute("UPDATE job_queue SET heartbeat_at = NOW() - INTERVAL '120 seconds' WHERE id = $1::uuid;", job_id)
+
+    # Trigger stale lease recovery
+    recovered_count = await service.recover_stale_jobs(stale_threshold_seconds=60)
+    assert recovered_count == 1
+
+    failed_job = await service.get_job(job_id)
+    assert failed_job["status"] == "failed"
+    assert failed_job["error_code"] == "STALE_LEASE_EXHAUSTED"
+    assert failed_job["completed_at"] is not None
+
+@pytest.mark.asyncio
+async def test_real_worker_process_crash_and_recovery():
+    """Point 8: Real OS process crash test (spawns subprocess, kills via SIGKILL, and recovers)."""
+    import subprocess
+    import sys
+    import os
+
+    conn_test = await asyncpg.connect(DB_URL)
+    try:
+        service = JobQueueService(conn_test)
+        idemp_key = "idemp_os_proc_crash_999"
+        job = await service.enqueue_job("os_crash_job", {"target": "res_os_crash"}, idempotency_key=idemp_key)
+        job_id = str(job["id"])
+
+        # Spawn real worker process that leases job and holds it open
+        code = f"""
+import asyncio, asyncpg
+from app.workers.main import Worker, register_handler
+
+async def slow_handler(job, conn):
+    await asyncio.sleep(60)
+
+register_handler("os_crash_job", slow_handler)
+
+async def run_worker():
+    w = Worker(worker_id="proc_worker_1", supported_types=["os_crash_job"])
+    await w.run("{DB_URL}")
+
+asyncio.run(run_worker())
+"""
+        proc = subprocess.Popen([sys.executable, "-c", code], env=os.environ.copy())
+
+        try:
+            # Poll database until job status is 'leased' or 'running'
+            leased = False
+            for _ in range(50):
+                await asyncio.sleep(0.2)
+                j = await service.get_job(job_id)
+                if j and j["status"] in ("leased", "running"):
+                    leased = True
+                    break
+
+            assert leased, "Worker process must acquire lease on queued job"
+
+            # Kill real OS worker process abruptly with SIGKILL (proc.kill)
+            proc.kill()
+            proc.wait()
+
+            # Simulate heartbeat timeout in DB
+            await conn_test.execute("UPDATE job_queue SET heartbeat_at = NOW() - INTERVAL '120 seconds' WHERE id = $1::uuid;", job_id)
+
+            # Recover stale lease
+            recovered_count = await service.recover_stale_jobs(60)
+            assert recovered_count == 1
+
+            # Worker B completes job
+            await conn_test.execute("UPDATE job_queue SET next_retry_at = NOW() WHERE id = $1::uuid;", job_id)
+            worker_b_lease = await service.lease_next_job("worker_B", ["os_crash_job"])
+            assert worker_b_lease is not None
+            await service.complete_job(job_id, "worker_B")
+
+            final_job = await service.get_job(job_id)
+            assert final_job["status"] == "succeeded"
+            assert final_job["locked_by"] == "worker_B"
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+    finally:
+        await conn_test.execute("DELETE FROM job_queue WHERE idempotency_key = 'idemp_os_proc_crash_999';")
+        await conn_test.close()
+
+
+
+

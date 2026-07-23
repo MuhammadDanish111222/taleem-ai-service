@@ -145,6 +145,21 @@ def test_replayed_jti(mock_keys, mock_redis):
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail["code"] == "AUTH_REPLAY_DETECTED"
 
+def test_wrong_issuer(mock_keys, mock_redis):
+    token = create_token(iss="wrong-issuer")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_jwt(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+    assert "Invalid token" in str(exc_info.value.detail["message"])
+
+def test_redis_unavailable_rejects_token(mock_keys, mock_redis):
+    mock_redis.set.side_effect = Exception("Redis connection refused")
+    token = create_token()
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_jwt(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "AUTH_REDIS_ERROR"
+
 def test_valid_token(mock_keys, mock_redis):
     token = create_token()
     ctx = verify_internal_jwt(f"Bearer {token}")
