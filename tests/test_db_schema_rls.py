@@ -135,45 +135,48 @@ async def test_foreign_key_on_delete_cascade_and_set_null(conn):
     ans_updated = await conn.fetchrow("SELECT id FROM ai_answers WHERE request_id = $1;", req["id"])
     assert ans_updated is None
 
+ALL_TABLES = [
+    "job_queue",
+    "system_settings",
+    "admin_audit_logs",
+    "ai_requests",
+    "ai_answers",
+    "rag_corpora",
+    "rag_corpus_versions",
+    "rag_document_versions",
+    "rag_chunks",
+    "rag_visuals",
+    "chunk_expected_questions",
+    "approved_question_bank",
+    "solved_papers",
+    "provider_attempts",
+]
+
 @pytest.mark.asyncio
 async def test_rls_deny_by_default_grants():
-    """Verifies that anon and authenticated roles receive 42501 permission denied on all tables."""
-    # Test with anon role
+    """Verifies that anon and authenticated roles receive 42501 permission denied on all 14 application tables."""
+    # 1. Test with anon role across all 14 tables
     anon_conn = await asyncpg.connect(DB_URL)
     try:
         await anon_conn.execute("SET ROLE anon; SET search_path = public;")
-        
-        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.fetch("SELECT * FROM public.job_queue;")
-        assert exc_info.value.sqlstate == "42501"
-        
-        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.fetch("SELECT * FROM public.rag_chunks;")
-        assert exc_info.value.sqlstate == "42501"
-        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.fetch("SELECT * FROM public.provider_attempts;")
-        assert exc_info.value.sqlstate == "42501"
+        for table in ALL_TABLES:
+            with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+                await anon_conn.fetch(f"SELECT * FROM public.{table};")
+            assert exc_info.value.sqlstate == "42501", f"Expected 42501 for anon role on table {table}, got {exc_info.value.sqlstate}"
     finally:
         await anon_conn.close()
 
-    # Test with authenticated role
+    # 2. Test with authenticated role across all 14 tables
     auth_conn = await asyncpg.connect(DB_URL)
     try:
         await auth_conn.execute("SET ROLE authenticated; SET search_path = public;")
-        
-        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.fetch("SELECT * FROM public.ai_requests;")
-        assert exc_info.value.sqlstate == "42501"
-        
-        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.fetch("SELECT * FROM public.provider_attempts;")
-        assert exc_info.value.sqlstate == "42501"
-
-        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.fetch("SELECT * FROM public.admin_audit_logs;")
-        assert exc_info.value.sqlstate == "42501"
+        for table in ALL_TABLES:
+            with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+                await auth_conn.fetch(f"SELECT * FROM public.{table};")
+            assert exc_info.value.sqlstate == "42501", f"Expected 42501 for authenticated role on table {table}, got {exc_info.value.sqlstate}"
     finally:
         await auth_conn.close()
+
 
 
 @pytest.mark.asyncio
