@@ -40,6 +40,8 @@ def mock_keys():
 
 def test_ts_signer_to_python_verifier_integration(mock_keys, mock_redis):
     """End-to-end integration test: TypeScript signer (taleem-web) -> Python verifier (taleem-ai-service)."""
+    if not os.path.exists(WEB_REPO_DIR):
+        pytest.skip("taleem-web repository not found at " + WEB_REPO_DIR)
     env = os.environ.copy()
     env["INTERNAL_JWT_PRIVATE_KEY"] = private_pem
     env["INTERNAL_JWT_KEY_ID"] = "integration-kid"
