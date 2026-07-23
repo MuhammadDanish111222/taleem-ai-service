@@ -26,6 +26,16 @@ os.environ.setdefault("POSTGRES_PASSWORD", "postgres")
 os.environ.setdefault("POSTGRES_DB", "taleem_ai")
 os.environ.setdefault("REDIS_HOST", "localhost")
 
+# Mock the DB pool so the lifespan handler doesn't block waiting for PostgreSQL
+async def _mock_init_db_pool(*a, **kw):
+    return MagicMock()
+
+async def _mock_close_db_pool():
+    pass
+
+patch('app.db.pool.init_db_pool', side_effect=_mock_init_db_pool).start()
+patch('app.db.pool.close_db_pool', side_effect=_mock_close_db_pool).start()
+
 import socket
 import asyncio
 
