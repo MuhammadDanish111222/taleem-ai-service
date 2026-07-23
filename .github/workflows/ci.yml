@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, module-3/internal-auth-and-worker-runtime ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, module-3/internal-auth-and-worker-runtime ]
 
 jobs:
   python-tests:
