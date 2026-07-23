@@ -27,3 +27,17 @@ This document serves as a persistent record of the progress made on the Python-b
 - **Verification Performed:**
   - Executed automated integration test suite (`tests/test_db_schema_rls.py`, `tests/test_repositories.py`) against PostgreSQL 17 + pgvector.
   - Verified 100% test pass rate across 3 consecutive pytest runs.
+
+## Phase 3B: Cross-Repository Internal Auth & Durable Worker Runtime
+- **Status:** Completed
+- **Details:**
+  - **Internal Auth Audit & Enhancements**: Audited `app/core/internal_auth.py` and added strict mandatory claim validation (`uid`, `admin`, `feature`, `request_id`, `jti`, `iat`, `exp`), strict timestamp constraints (`exp - iat <= 60`s, `exp > iat`), and atomic Redis `SET NX EX` replay prevention (`set(key, "1", nx=True, ex=60)`).
+  - **Job Queue Service**: Created `app/services/jobs/queue.py` as a service-layer wrapper around `JobRepository`.
+  - **Strict Lock Ownership & Row Count Verification**: Updated all mutating repository queries (`update_heartbeat`, `update_progress`, `complete_job`, `fail_job`) to enforce `locked_by = worker_id` and check affected row counts.
+  - **Worker Runtime Process**: Created `app/workers/main.py` standalone worker process running via `python -m app.workers.main`. Features `FOR UPDATE SKIP LOCKED` polling, background heartbeating, graceful shutdown without premature lease release, deterministic stale recovery, and immediate failure for unsupported job types.
+  - **Deterministic Stale Lease Recovery**: `recover_stale_jobs` resets stale jobs with attempts remaining to `retry_wait`, and terminally fails exhausted jobs with `STALE_LEASE_EXHAUSTED`.
+- **Verification Performed:**
+  - Cross-repo integration test (`test_cross_repo_jwt_integration.py`) verifying TypeScript `signInternalJwt` token output passes Python `verify_internal_jwt`.
+  - Concurrency test with independent Postgres connections verifying `FOR UPDATE SKIP LOCKED`.
+  - Worker crash recovery test verifying idempotent side-effects with exactly 1 output record.
+  - Protected endpoint tests verifying 401 on unsigned/malformed requests and 200 on valid internal JWT.

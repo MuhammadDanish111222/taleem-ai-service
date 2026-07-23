@@ -39,3 +39,15 @@ This document logs significant architectural decisions and changes made for the 
 - **Decision:** Deferred HNSW Indexing.
 - **Change Details:**
   - Documented exact vector search at MVP volumes and set 500,000 vectors as the trigger for introducing HNSW index.
+
+## Phase 3B: Auth Audit & Worker Runtime Architecture
+- **Decision:** Pre-existing Auth Code Audit & Strict Claim Validation.
+  - Audited `app/core/internal_auth.py`. Confirmed RS256 signature check, `kid` lookup, `aud="taleem-ai-service"`, `iss="taleem-web"`, `exp` expiration, and Redis JTI replay check were already present.
+  - **Gaps Added**: Strict validation of all mandatory claims (`uid`, `admin`, `feature`, `request_id`, `jti`, `iat`, `exp`), strict timestamp check (`exp - iat <= 60`s, `exp > iat`), and atomic Redis `set(key, "1", nx=True, ex=60)` replay store.
+- **Decision:** Enforced Worker Lock Ownership.
+  - All job status update queries (`heartbeat`, `progress`, `complete`, `fail`) explicitly filter on `locked_by = worker_id AND status IN ('leased', 'running')` and verify affected row count > 0 to prevent old/replaced workers from mutating recovered jobs.
+- **Decision:** Worker Graceful Shutdown & Stale Recovery Policy.
+  - On SIGTERM/SIGINT, the worker stops leasing new jobs and allows active jobs a grace period to complete while heartbeating. If the grace period expires, the worker process exits without releasing the DB lease, enabling safe stale-lease recovery after `heartbeat_at` timeout (preventing dual execution).
+  - `recover_stale_jobs` resets stale jobs with attempt count < `max_attempts` to `retry_wait` (next_retry_at = NOW() + 5s), and terminally fails exhausted jobs with `STALE_LEASE_EXHAUSTED`.
+- **Decision:** Unsupported Job Type Terminal Failure.
+  - Workers encountering unhandled `job_type` values immediately mark jobs as `failed` with error code `UNSUPPORTED_JOB_TYPE` instead of retrying indefinitely.
