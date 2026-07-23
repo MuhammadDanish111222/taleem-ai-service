@@ -177,6 +177,34 @@ async def test_rls_deny_by_default_grants():
     finally:
         await auth_conn.close()
 
+@pytest.mark.asyncio
+async def test_rls_deny_write_access():
+    """Verifies that anon INSERT and authenticated UPDATE/DELETE attempts receive 42501 permission denied."""
+    # 1. Test INSERT attempt as anon role
+    anon_conn = await asyncpg.connect(DB_URL)
+    try:
+        await anon_conn.execute("SET ROLE anon; SET search_path = public;")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+            await anon_conn.execute("INSERT INTO public.job_queue (job_type, payload) VALUES ('test_job', '{}');")
+        assert exc_info.value.sqlstate == "42501"
+    finally:
+        await anon_conn.close()
+
+    # 2. Test UPDATE and DELETE attempts as authenticated role
+    auth_conn = await asyncpg.connect(DB_URL)
+    try:
+        await auth_conn.execute("SET ROLE authenticated; SET search_path = public;")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+            await auth_conn.execute("UPDATE public.ai_requests SET status = 'completed';")
+        assert exc_info.value.sqlstate == "42501"
+
+        with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
+            await auth_conn.execute("DELETE FROM public.rag_corpora;")
+        assert exc_info.value.sqlstate == "42501"
+    finally:
+        await auth_conn.close()
+
+
 
 
 @pytest.mark.asyncio
