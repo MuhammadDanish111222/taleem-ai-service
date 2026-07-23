@@ -25,13 +25,13 @@ import asyncio
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.bind(("127.0.0.1", port))
+sock.bind(("0.0.0.0", port))
 actual_port = sock.getsockname()[1]
 print(f"SERVER_STARTED_PORT:{actual_port}", flush=True)
 
 from app.main import app
 import uvicorn
 
-config = uvicorn.Config(app, host="127.0.0.1", port=actual_port, log_level="error")
+config = uvicorn.Config(app, host="0.0.0.0", port=actual_port, log_level="error")
 server = uvicorn.Server(config)
 asyncio.run(server.serve(sockets=[sock]))
