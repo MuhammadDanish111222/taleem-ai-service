@@ -139,17 +139,17 @@ async def test_rls_deny_by_default_grants():
     # Test with anon role
     anon_conn = await asyncpg.connect(DB_URL)
     try:
-        await anon_conn.execute("SET ROLE anon;")
+        await anon_conn.execute("SET ROLE anon; SET search_path = public;")
         
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.fetch("SELECT * FROM job_queue;")
+            await anon_conn.fetch("SELECT * FROM public.job_queue;")
         assert exc_info.value.sqlstate == "42501"
         
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.fetch("SELECT * FROM rag_chunks;")
+            await anon_conn.fetch("SELECT * FROM public.rag_chunks;")
         assert exc_info.value.sqlstate == "42501"
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.fetch("SELECT * FROM provider_attempts;")
+            await anon_conn.fetch("SELECT * FROM public.provider_attempts;")
         assert exc_info.value.sqlstate == "42501"
     finally:
         await anon_conn.close()
@@ -157,21 +157,22 @@ async def test_rls_deny_by_default_grants():
     # Test with authenticated role
     auth_conn = await asyncpg.connect(DB_URL)
     try:
-        await auth_conn.execute("SET ROLE authenticated;")
+        await auth_conn.execute("SET ROLE authenticated; SET search_path = public;")
         
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.fetch("SELECT * FROM ai_requests;")
+            await auth_conn.fetch("SELECT * FROM public.ai_requests;")
         assert exc_info.value.sqlstate == "42501"
         
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.fetch("SELECT * FROM provider_attempts;")
+            await auth_conn.fetch("SELECT * FROM public.provider_attempts;")
         assert exc_info.value.sqlstate == "42501"
 
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.fetch("SELECT * FROM admin_audit_logs;")
+            await auth_conn.fetch("SELECT * FROM public.admin_audit_logs;")
         assert exc_info.value.sqlstate == "42501"
     finally:
         await auth_conn.close()
+
 
 @pytest.mark.asyncio
 async def test_provider_attempts_check_constraints(conn):
