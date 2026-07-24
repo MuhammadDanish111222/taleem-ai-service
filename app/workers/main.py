@@ -16,6 +16,8 @@ import asyncpg
 from app.core.config import get_settings
 from app.services.jobs.queue import JobQueueService
 
+from app.workers.handlers.jsonl_ingest import handle_jsonl_ingest
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s")
 logger = logging.getLogger("worker_main")
 
@@ -37,7 +39,7 @@ class Worker:
         stale_threshold_seconds: int = 60
     ):
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
-        self.supported_types = supported_types or ["test_job", "ingestion_job"]
+        self.supported_types = supported_types or ["test_job", "ingestion_job", "jsonl_ingest"]
         self.poll_interval = poll_interval
         self.heartbeat_interval = heartbeat_interval
         self.stale_check_interval = stale_check_interval
@@ -169,6 +171,7 @@ async def dummy_test_handler(job: Dict[str, Any], conn: asyncpg.Connection):
     await asyncio.sleep(0.1)
 
 register_handler("test_job", dummy_test_handler)
+register_handler("jsonl_ingest", handle_jsonl_ingest)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":
@@ -179,3 +182,4 @@ if __name__ == "__main__":
         asyncio.run(worker.run())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Worker process terminated.")
+

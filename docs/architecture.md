@@ -78,3 +78,18 @@ This document provides the definitive architectural design, database schema spec
 - Textbook content contains a mixture of English, Urdu, and Roman Urdu.
 - Standard English stemmers fail or corrupt Urdu transliterations.
 - We use PostgreSQL's `'simple'` text search configuration (`to_tsvector('simple', content)`), which tokenizes and lowercases text without applying language-specific stemming rules, ensuring accurate search matching for Urdu, English, and Roman Urdu.
+
+---
+
+## 5. Concurrency & Row Locking Hierarchy Strategy
+
+To prevent race conditions, duplicate version generation, and database deadlocks during multi-chapter background ingestion:
+
+### Strict Lock Order:
+1. **Parent Corpora Lock (First)**: `SELECT id FROM rag_corpora WHERE id = $1 FOR UPDATE` (acquired after atomic `ON CONFLICT DO UPDATE` upsert).
+2. **Corpus Version Lock (Second)**: `SELECT status FROM rag_corpus_versions WHERE id = $1 FOR UPDATE`.
+
+### Governance Contract:
+- **Phase 3C (Chunk Ingestion)**: Locks `rag_corpora` to check/create the single `building` corpus version for a subject scope, then locks `rag_corpus_versions` to verify `status == 'building'` before replacing chapter chunks and expected questions.
+- **Phase 3F (Activation Engine)**: When activating or superseding corpus versions, Phase 3F **MUST** follow this exact lock order (locking `rag_corpora` before modifying `rag_corpus_versions`) to guarantee deadlock-free execution against concurrent chunk ingestion workers.
+
