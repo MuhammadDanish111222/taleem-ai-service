@@ -4,6 +4,7 @@ Environment: Verified against real PostgreSQL test database using asyncpg connec
 """
 
 import asyncio
+import json
 import os
 import uuid
 from unittest.mock import MagicMock, patch
@@ -121,9 +122,10 @@ async def test_valid_jsonl_ingestion_job_execution(conn):
     assert eq0[0]["question_text"] == "What does physics study?"
     assert eq0[0]["embedding"] is None
     assert eq0[0]["question_normalized"] == "what does physics study?"
-    assert (
-        chunks[0]["metadata"]["token_count"]["version"] == "test_tokenizer:fixture@v1"
-    )
+    metadata = chunks[0]["metadata"]
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    assert metadata["token_count"]["version"] == "test_tokenizer:fixture@v1"
 
 
 @pytest.mark.asyncio

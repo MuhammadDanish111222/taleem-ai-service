@@ -9,13 +9,12 @@ import pytest
 
 from app.api.v1 import internal
 from app.core.internal_auth import AuthContext
+from tests.conftest import DB_URL
 
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(
-        "postgresql://postgres:postgres@localhost:5432/taleem_dev"
-    )
+    connection = await asyncpg.connect(DB_URL)
     tx = connection.transaction()
     await tx.start()
     yield connection
