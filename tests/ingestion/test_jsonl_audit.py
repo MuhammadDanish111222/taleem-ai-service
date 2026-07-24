@@ -104,3 +104,65 @@ async def test_accepted_and_rejected_jsonl_actions_are_auditable_without_source_
 
 async def _validated(chunks, errors):
     return chunks, errors
+
+
+@pytest.mark.asyncio
+async def test_audit_repository_sanitization_without_database():
+    """Unit test: verifies AuditRepository sanitization payload structure with mocked connection."""
+    from unittest.mock import AsyncMock, MagicMock
+    from app.repositories.audit_repository import AuditRepository
+
+    mock_conn = MagicMock()
+    mock_conn.fetchrow = AsyncMock(
+        side_effect=lambda query, actor_id, action, target_type, target_id, before, after: {
+            "actor_id": actor_id,
+            "action": action,
+            "target_type": target_type,
+            "target_id": target_id,
+            "before_value": before,
+            "after_value": json.loads(after),
+        }
+    )
+
+    repo = AuditRepository(mock_conn)
+    sensitive_source = "SECRET_RAW_JSONL_WITH_CHUNK_TEXT_AND_EXPECTED_QUESTIONS"
+    import hashlib
+    source_hash = hashlib.sha256(sensitive_source.encode()).hexdigest()
+
+    result = await repo.create_jsonl_ingestion_audit(
+        actor_id="admin-user-777",
+        request_id="req-audit-999",
+        scope={
+            "board_id": "fbise",
+            "class_id": "class_9",
+            "subject_id": "physics",
+            "chapter_id": "ch_1",
+        },
+        outcome="rejected",
+        error_code="JSONL_SCOPE_MISMATCH",
+        job_id=None,
+        source_hash=source_hash,
+        idempotency_key_hash="hash-123",
+    )
+
+    assert result["actor_id"] == "admin-user-777"
+    assert result["action"] == "jsonl_ingest_submission"
+    assert result["target_type"] == "jsonl_ingest"
+    assert result["target_id"] == source_hash
+
+    after = result["after_value"]
+    assert after["outcome"] == "rejected"
+    assert after["error_code"] == "JSONL_SCOPE_MISMATCH"
+    assert after["board_id"] == "fbise"
+    assert after["class_id"] == "class_9"
+    assert after["subject_id"] == "physics"
+    assert after["chapter_id"] == "ch_1"
+    assert after["source_hash"] == source_hash
+
+    # Assert zero sensitive text in the serialized audit payload
+    serialized = json.dumps(result)
+    assert sensitive_source not in serialized
+    assert "chunk_text" not in serialized
+    assert "expected_questions" not in serialized
+    assert "secret" not in serialized.lower()
+
