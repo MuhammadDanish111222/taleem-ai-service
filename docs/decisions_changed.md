@@ -51,3 +51,18 @@ This document logs significant architectural decisions and changes made for the 
   - `recover_stale_jobs` resets stale jobs with attempt count < `max_attempts` to `retry_wait` (next_retry_at = NOW() + 5s), and terminally fails exhausted jobs with `STALE_LEASE_EXHAUSTED`.
 - **Decision:** Unsupported Job Type Terminal Failure.
   - Workers encountering unhandled `job_type` values immediately mark jobs as `failed` with error code `UNSUPPORTED_JOB_TYPE` instead of retrying indefinitely.
+
+## Phase 3C (v1-scoped): Admin JSONL Chunk Ingestion & Validation
+- **Decision:** v1 Manual JSONL Ingestion over Automated OCR Pipeline.
+  - For v1 MVP, PyMuPDF/OCR-based automated chapter/chunk detection is replaced by admin JSONL file ingestion containing structured chunk objects and expected questions.
+- **Decision:** Mandatory Firestore 4-Level Ancestor Chain Verification.
+  - Every row's `board_id`, `class_id`, `subject_id`, `chapter_id` must exist and have `active == True` in Firestore (`boards/{board_id}/classes/{class_id}/subjects/{subject_id}/chapters/{chapter_id}`). If Firestore client is unavailable or any level is inactive/non-existent, the job fails loudly with `RuntimeError`.
+- **Decision:** Single 'Building' Corpus Version Accumulation per Subject Scope.
+  - Multiple chapter JSONL uploads for the same subject (`board_id`, `class_id`, `subject_id`) accumulate chunks into a single `building` corpus version.
+- **Decision:** Parent Corpora Locking Hierarchy (`FOR UPDATE`).
+  - To prevent check-then-act race conditions between concurrent worker threads, `get_or_create_building_corpus_version` performs `INSERT INTO rag_corpora ... ON CONFLICT DO UPDATE ... RETURNING id` and locks the parent `rag_corpora` row (`SELECT id FROM rag_corpora WHERE id = $1 FOR UPDATE`) before querying/creating `rag_corpus_versions`.
+- **Decision:** Document-Level Atomic Replacement & Count Reconciliation.
+  - Re-uploading a chapter replaces all chunks for that `document_version_id` inside a transaction. `expected_chunk_count` is updated by delta (`GREATEST(0, expected_chunk_count + delta)`), and `embedded_chunk_count` is reconciled directly from non-null embedding rows (`COUNT(*) WHERE embedding IS NOT NULL`).
+- **Decision:** Pre-Embedding Storage Support.
+  - Migration `0003b_jsonl_schema_adjustments.sql` dropped `NOT NULL` on `chunk_expected_questions.embedding` to allow storing expected question strings prior to Phase 3D vector embedding generation.
+

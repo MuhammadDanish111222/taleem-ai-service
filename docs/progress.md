@@ -41,3 +41,18 @@ This document serves as a persistent record of the progress made on the Python-b
   - Concurrency test with independent Postgres connections verifying `FOR UPDATE SKIP LOCKED`.
   - Worker crash recovery test verifying idempotent side-effects with exactly 1 output record.
   - Protected endpoint tests verifying 401 on unsigned/malformed requests and 200 on valid internal JWT.
+
+## Phase 3C (v1-scoped): Admin JSONL Chunk Ingestion & Validation
+- **Status:** Completed
+- **Details:**
+  - **Schema Adjustments**: Executed migration `0003b_jsonl_schema_adjustments.sql`, dropping `NOT NULL` on `chunk_expected_questions.embedding` and adding `content_type`, `metadata`, `content_hash`, `language`, and `token_count` to `rag_chunks`.
+  - **Validation Module**: Built `app/services/ingestion/jsonl_chunks.py` providing SHA256 content hashing (`compute_content_hash`), word token counting (`count_tokens`), line-by-line schema validation, strict `page_range` tuple checks (`null` or `[start_page, end_page]`), and sanitized error logging (raw text excluded).
+  - **Firestore Hierarchy Verification**: Implemented 4-level ancestor chain check (`check_firestore_hierarchy`) verifying document existence and `active == True` across `boards`, `classes`, `subjects`, and `chapters` with in-memory batch caching. Requires live Firestore client or raises loud `RuntimeError` if unavailable.
+  - **Repository Atomic Operations**: Updated `RagRepository` with `get_or_create_building_corpus_version` (holding parent `rag_corpora` row lock via `ON CONFLICT DO UPDATE` + `FOR UPDATE`) and `replace_chapter_chunks` (locking corpus version `FOR UPDATE`, deleting old chunks/questions via CASCADE, inserting new rows, updating `expected_chunk_count` by delta, and reconciling `embedded_chunk_count`).
+  - **Worker Job Handler**: Registered `jsonl_ingest` handler in `app/workers/handlers/jsonl_ingest.py` and `app/workers/main.py`.
+  - **Internal Endpoint**: Exposed `POST /api/v1/internal/ingest/jsonl` in `app/api/v1/internal.py` protected by RS256 internal JWT requiring admin privileges.
+- **Verification Performed:**
+  - `tests/ingestion/test_jsonl_validation.py` verifying field mapping, error sanitization, and hierarchy rejection.
+  - `tests/ingestion/test_jsonl_ingestion_job.py` verifying job execution, atomic chapter re-upload replacement, multi-chapter corpus accumulation, status locks, first-insert race prevention, explicit idempotency-key replay zero-row creation, handler direct re-execution idempotency, and loud failure when Firestore is unavailable.
+  - 100% test pass rate across 3 consecutive pytest runs (59 passed in 98s).
+
