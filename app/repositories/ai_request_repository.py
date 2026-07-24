@@ -1,8 +1,10 @@
 """AI Requests and Answers Repository using Asyncpg."""
 
-from typing import Optional, Dict, Any, List
 import json
+from typing import Any, Dict, List, Optional
+
 import asyncpg
+
 
 class AIRequestRepository:
     def __init__(self, conn: asyncpg.Connection):
@@ -19,7 +21,7 @@ class AIRequestRepository:
         normalized_question: str,
         question_hash: str,
         corpus_version_id: Optional[str] = None,
-        prompt_version: str = "v1"
+        prompt_version: str = "v1",
     ) -> Dict[str, Any]:
         """Creates an AI request record."""
         query = """
@@ -32,9 +34,17 @@ class AIRequestRepository:
         RETURNING *;
         """
         row = await self.conn.fetchrow(
-            query, board_id, class_id, subject_id, language, answer_mode,
-            raw_question, normalized_question, question_hash,
-            corpus_version_id, prompt_version
+            query,
+            board_id,
+            class_id,
+            subject_id,
+            language,
+            answer_mode,
+            raw_question,
+            normalized_question,
+            question_hash,
+            corpus_version_id,
+            prompt_version,
         )
         return dict(row)
 
@@ -46,7 +56,7 @@ class AIRequestRepository:
         chunk_text_score: Optional[float] = None,
         expected_question_score: Optional[float] = None,
         tokens_used: int = 0,
-        latency_ms: int = 0
+        latency_ms: int = 0,
     ) -> Dict[str, Any]:
         """Records an AI answer and updates request status to completed."""
         citations_json = json.dumps(citation_sources or [])
@@ -59,13 +69,19 @@ class AIRequestRepository:
         RETURNING *;
         """
         answer_row = await self.conn.fetchrow(
-            query_answer, request_id, answer_text, citations_json,
-            chunk_text_score, expected_question_score, tokens_used, latency_ms
+            query_answer,
+            request_id,
+            answer_text,
+            citations_json,
+            chunk_text_score,
+            expected_question_score,
+            tokens_used,
+            latency_ms,
         )
 
         await self.conn.execute(
             "UPDATE ai_requests SET status = 'completed' WHERE id = $1::uuid;",
-            request_id
+            request_id,
         )
         return dict(answer_row)
 
@@ -78,7 +94,7 @@ class AIRequestRepository:
         language: str,
         question_hash: str,
         corpus_version_id: Optional[str] = None,
-        prompt_version: str = "v1"
+        prompt_version: str = "v1",
     ) -> Optional[Dict[str, Any]]:
         """Exact-answer cache lookup using composite key index."""
         query = """
@@ -101,7 +117,14 @@ class AIRequestRepository:
         LIMIT 1;
         """
         row = await self.conn.fetchrow(
-            query, board_id, class_id, subject_id, answer_mode, language,
-            question_hash, corpus_version_id, prompt_version
+            query,
+            board_id,
+            class_id,
+            subject_id,
+            answer_mode,
+            language,
+            question_hash,
+            corpus_version_id,
+            prompt_version,
         )
         return dict(row) if row else None

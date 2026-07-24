@@ -2,17 +2,27 @@
 
 import json
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
+
 import asyncpg
 
-from app.services.ingestion.jsonl_chunks import validate_and_parse_jsonl
-from app.repositories.rag_repository import RagRepository
+from app.core.config import get_settings
 from app.core.firebase_admin import get_firebase_app
+from app.repositories.audit_repository import AuditRepository
+from app.repositories.rag_repository import RagRepository
+from app.services.ingestion.jsonl_chunks import (
+    JsonlValidationError,
+    get_validation_error_code,
+    validate_and_parse_jsonl,
+)
+from app.services.ingestion.token_count import get_token_counter
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_jsonl_ingest(job: Dict[str, Any], conn: asyncpg.Connection) -> Dict[str, Any]:
+async def handle_jsonl_ingest(
+    job: Dict[str, Any], conn: asyncpg.Connection
+) -> Dict[str, Any]:
     """Worker job handler for processing admin uploaded JSONL chunk batches.
 
     Orchestrates line-by-line validation, corpus version accumulation, document version
@@ -34,20 +44,40 @@ async def handle_jsonl_ingest(job: Dict[str, Any], conn: asyncpg.Connection) -> 
         app = get_firebase_app()
         if app:
             from firebase_admin import firestore
+
             firestore_db = firestore.client()
     except Exception as fb_err:
         logger.error(f"Firestore client initialization failed: {fb_err}")
 
     if firestore_db is None:
-        raise RuntimeError("Firebase Admin / Firestore client unavailable for mandatory catalogue hierarchy verification.")
+        raise RuntimeError(
+            "Firebase Admin / Firestore client unavailable for mandatory catalogue hierarchy verification."
+        )
 
     # Step 1: Validate and parse JSONL
-    valid_chunks, errors = await validate_and_parse_jsonl(jsonl_content, firestore_db)
+    valid_chunks, errors = await validate_and_parse_jsonl(
+        jsonl_content, firestore_db, token_counter=get_token_counter()
+    )
     if errors:
-        # Sanitize error output: return row numbers + field names + reason codes only
-        sanitized_errors_json = json.dumps(errors)
-        logger.error(f"JSONL validation failed with {len(errors)} error(s): {sanitized_errors_json}")
-        raise ValueError(f"JSONL validation failed: {sanitized_errors_json}")
+        error_code = get_validation_error_code(errors)
+        logger.error(
+            "JSONL validation failed with %s sanitized error(s), code=%s",
+            len(errors),
+            error_code,
+        )
+        scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
+        async with conn.transaction():
+            await AuditRepository(conn).create_jsonl_ingestion_audit(
+                actor_id=str(payload.get("submitted_by") or "unknown"),
+                request_id=str(payload.get("request_id") or "unknown"),
+                scope=scope,
+                outcome="rejected",
+                error_code=error_code,
+                job_id=str(job.get("id")) if job.get("id") else None,
+                source_hash=str(payload.get("source_hash") or ""),
+                idempotency_key_hash=payload.get("idempotency_key_hash"),
+            )
+        raise JsonlValidationError(error_code, errors)
 
     if not valid_chunks:
         raise ValueError("JSONL file contained no valid chunk records.")
@@ -64,7 +94,15 @@ async def handle_jsonl_ingest(job: Dict[str, Any], conn: asyncpg.Connection) -> 
     # Step 2: Acquire building corpus version & replace chapter chunks atomically
     async with conn.transaction():
         # Get or create building corpus version for this subject scope
-        corpus_ver = await repo.get_or_create_building_corpus_version(board_id, class_id, subject_id)
+        settings = get_settings()
+        corpus_ver = await repo.get_or_create_building_corpus_version(
+            board_id,
+            class_id,
+            subject_id,
+            embedding_model=settings.EMBEDDING_MODEL,
+            embedding_revision=settings.EMBEDDING_MODEL_REVISION,
+            embedding_dim=settings.EMBEDDING_DIM,
+        )
         corpus_version_id = str(corpus_ver["id"])
 
         # Create/upsert document version for this chapter

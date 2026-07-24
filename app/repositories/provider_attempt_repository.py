@@ -1,7 +1,9 @@
 """Provider Attempt Repository using Asyncpg."""
 
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 import asyncpg
+
 
 class ProviderAttemptRepository:
     def __init__(self, conn: asyncpg.Connection):
@@ -24,7 +26,7 @@ class ProviderAttemptRepository:
         completion_tokens: int = 0,
         latency_ms: int = 0,
         error_code: Optional[str] = None,
-        trace_id: Optional[str] = None
+        trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Records an external provider API attempt."""
         query = """
@@ -44,14 +46,28 @@ class ProviderAttemptRepository:
         """
         row = await self.conn.fetchrow(
             query,
-            ai_request_id, job_id, provider, model, attempt_no,
-            provider_request_id, system_fingerprint, finish_reason,
-            prompt_tokens, cache_tokens, reasoning_tokens, completion_tokens,
-            latency_ms, status, error_code, trace_id
+            ai_request_id,
+            job_id,
+            provider,
+            model,
+            attempt_no,
+            provider_request_id,
+            system_fingerprint,
+            finish_reason,
+            prompt_tokens,
+            cache_tokens,
+            reasoning_tokens,
+            completion_tokens,
+            latency_ms,
+            status,
+            error_code,
+            trace_id,
         )
         return dict(row)
 
-    async def get_attempts_for_request(self, ai_request_id: str) -> List[Dict[str, Any]]:
+    async def get_attempts_for_request(
+        self, ai_request_id: str
+    ) -> List[Dict[str, Any]]:
         """Queries provider attempts for a specific AI request."""
         query = "SELECT * FROM provider_attempts WHERE ai_request_id = $1::uuid ORDER BY attempt_no ASC;"
         rows = await self.conn.fetch(query, ai_request_id)

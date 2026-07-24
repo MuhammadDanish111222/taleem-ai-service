@@ -1,8 +1,11 @@
 """RAG Schema Repository using Asyncpg for vector and lexical queries."""
 
-from typing import Optional, Dict, Any, List
 import json
+from typing import Any, Dict, List, Optional
+
 import asyncpg
+
+from app.services.ingestion.normalization import normalize_expected_question
 
 
 class RagRepository:
@@ -69,7 +72,9 @@ class RagRepository:
             "SELECT MAX(version_no) as max_v FROM rag_corpus_versions WHERE corpus_id = $1::uuid;",
             corpus_id,
         )
-        max_v = max_v_row["max_v"] if max_v_row and max_v_row["max_v"] is not None else 0
+        max_v = (
+            max_v_row["max_v"] if max_v_row and max_v_row["max_v"] is not None else 0
+        )
         new_version_no = max_v + 1
 
         insert_version_query = """
@@ -118,10 +123,13 @@ class RagRepository:
         )
         return dict(row)
 
-    async def activate_corpus_version(self, corpus_version_id: str, activated_by: str) -> bool:
+    async def activate_corpus_version(
+        self, corpus_version_id: str, activated_by: str
+    ) -> bool:
         """Activates a corpus version, automatically superseding any existing active version."""
         row = await self.conn.fetchrow(
-            "SELECT corpus_id FROM rag_corpus_versions WHERE id = $1::uuid;", corpus_version_id
+            "SELECT corpus_id FROM rag_corpus_versions WHERE id = $1::uuid;",
+            corpus_version_id,
         )
         if not row:
             return False
@@ -229,7 +237,8 @@ class RagRepository:
 
         # 3. Delete existing chunks for document_version_id (CASCADE deletes chunk_expected_questions)
         await self.conn.execute(
-            "DELETE FROM rag_chunks WHERE document_version_id = $1::uuid;", document_version_id
+            "DELETE FROM rag_chunks WHERE document_version_id = $1::uuid;",
+            document_version_id,
         )
 
         inserted_chunks: List[Dict[str, Any]] = []
@@ -272,11 +281,12 @@ class RagRepository:
                 if q_text and isinstance(q_text, str) and q_text.strip():
                     await self.conn.execute(
                         """
-                        INSERT INTO chunk_expected_questions (chunk_id, question_text, embedding)
-                        VALUES ($1::uuid, $2, NULL);
+                        INSERT INTO chunk_expected_questions (chunk_id, question_text, question_normalized, embedding)
+                        VALUES ($1::uuid, $2, $3, NULL);
                         """,
                         chunk_id,
                         q_text.strip(),
+                        normalize_expected_question(q_text),
                     )
 
             inserted_chunks.append(chunk_dict)
