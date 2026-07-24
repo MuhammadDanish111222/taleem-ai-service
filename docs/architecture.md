@@ -78,3 +78,35 @@ This document provides the definitive architectural design, database schema spec
 - Textbook content contains a mixture of English, Urdu, and Roman Urdu.
 - Standard English stemmers fail or corrupt Urdu transliterations.
 - We use PostgreSQL's `'simple'` text search configuration (`to_tsvector('simple', content)`), which tokenizes and lowercases text without applying language-specific stemming rules, ensuring accurate search matching for Urdu, English, and Roman Urdu.
+
+---
+
+## 5. Concurrency & Row Locking Hierarchy Strategy
+
+To prevent race conditions, duplicate version generation, and database deadlocks during multi-chapter background ingestion:
+
+### Strict Lock Order:
+1. **Parent Corpora Lock (First)**: `SELECT id FROM rag_corpora WHERE id = $1 FOR UPDATE` (acquired after atomic `ON CONFLICT DO UPDATE` upsert).
+2. **Corpus Version Lock (Second)**: `SELECT status FROM rag_corpus_versions WHERE id = $1 FOR UPDATE`.
+
+### Governance Contract:
+- **Phase 3C (Chunk Ingestion)**: Locks `rag_corpora` to check/create the single `building` corpus version for a subject scope, then locks `rag_corpus_versions` to verify `status == 'building'` before replacing chapter chunks and expected questions.
+- **Phase 3F (Activation Engine)**: When activating or superseding corpus versions, Phase 3F **MUST** follow this exact lock order (locking `rag_corpora` before modifying `rag_corpus_versions`) to guarantee deadlock-free execution against concurrent chunk ingestion workers.
+
+---
+
+## 6. Known Gaps Identified for Future Phases
+
+The following open questions were identified during Phase 3C closeout review against the build guide. They are recorded here for whoever scopes Phases 3D, 3E, and 7A — no implementation action is required now.
+
+### Visual Pipeline (no assigned phase)
+
+The `rag_visuals` table exists in the schema (`0002_rag_schema.sql`) but is an **incomplete stub** relative to the full spec. The current columns are `id`, `chunk_id`, `visual_type`, `storage_path`, `caption`, and `created_at`. The build guide's visual-provenance specification requires six additional columns that are not yet present: `page`, `bbox`, `reading_order`, `content_hash`, `review_status`, and `complex_structure`. Of these, `bbox`/`page` provide spatial provenance for PDF-layout extraction, and `complex_structure` is what Phase 4E's source-image-fallback logic depends on. The current JSONL ingestion path (`admin_jsonl_v1`) does not populate `rag_visuals` at all, and no later phase should assume the table is ready to insert into as-is — a new migration extending it with the missing columns will be needed when the automated PDF-layout pipeline is built. Later phases (3E retrieval, 3F activation/QA, 4A answer generation, 4E citations, 4F visual rendering) reference visual-element functionality that depends on both populated rows and the full column set. For content ingested via the admin JSONL path, visual retrieval should be treated as **deferred/optional** until that pipeline exists. Per the build guide's own MVP v1 decision: *"revisit automated extraction once manual chunking becomes the bottleneck on content-addition speed, or once visual/flowchart retrieval is needed."*
+
+### Expected-Question Embeddings (Phase 3D / 3E gap)
+
+The `chunk_expected_questions` table exists and Phase 3C populates question text rows with `embedding = NULL`. However, neither Phase 3D (embedding generation) nor Phase 3E (retrieval query engine) as currently described explicitly addresses generating embeddings for these rows or including them as a retrieval signal. Whoever scopes Phase 3D should decide whether expected-question embedding is part of the same batch-embedding job that handles `rag_chunks.embedding`, and whoever scopes Phase 3E should decide whether expected-question vector similarity is a retrieval pathway (and if so, how it fuses with chunk-text dense/lexical scores).
+
+### Retrieval Settings Granularity (Phase 7A gap)
+
+Phase 7A's typed settings service is described as managing "retrieval top K" generically, but the actual retrieval pipeline (Phase 3E) will require several distinct sub-parameters: dense candidate count, lexical candidate count, expected-question candidate count, evidence-sufficiency thresholds, per-document result caps, and the RRF (Reciprocal Rank Fusion) constant. None of these are individually named in the current Phase 7A specification. Whoever scopes Phase 7A should enumerate and type these parameters explicitly so the settings service covers the full retrieval configuration surface.

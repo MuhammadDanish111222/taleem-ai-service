@@ -1,10 +1,9 @@
-"""Integration tests for Database Migrations, Constraints, FK Cascade, and RLS Grants."""
-
+import os
 import pytest
 import asyncpg
 from app.db.migrator import run_migrations
 
-DB_URL = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
 
 @pytest.fixture
 async def conn():

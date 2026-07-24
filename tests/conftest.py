@@ -1,21 +1,19 @@
-"""Pytest global configuration and database fixtures."""
-
+import os
 import asyncio
 import pytest
 import asyncpg
 from app.db.migrator import run_migrations
 
-DB_URL = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
 
-async def _reset_and_migrate():
+async def _ensure_migrated():
     conn = await asyncpg.connect(DB_URL)
     try:
-        await conn.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")
         await run_migrations(conn)
     finally:
         await conn.close()
 
-@pytest.fixture(autouse=True, scope="package")
+@pytest.fixture(autouse=True, scope="session")
 def ensure_db_migrated():
-    """Resets public schema and applies all migrations once per test execution package."""
-    asyncio.run(_reset_and_migrate())
+    """Applies database migrations if needed once per test execution session."""
+    asyncio.run(_ensure_migrated())
