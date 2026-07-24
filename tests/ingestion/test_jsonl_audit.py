@@ -62,9 +62,14 @@ async def test_accepted_and_rejected_jsonl_actions_are_auditable_without_source_
     )
     assert accepted_audit["actor_id"] == "admin-audit"
     assert accepted_audit["action"] == "jsonl_ingest_submission"
-    assert accepted_audit["after_value"]["outcome"] == "accepted"
-    assert accepted_audit["after_value"]["request_id"] == "req-audit"
-    assert accepted_audit["after_value"]["board_id"] == "fbise"
+    after_val = (
+        json.loads(accepted_audit["after_value"])
+        if isinstance(accepted_audit["after_value"], str)
+        else accepted_audit["after_value"]
+    )
+    assert after_val["outcome"] == "accepted"
+    assert after_val["request_id"] == "req-audit"
+    assert after_val["board_id"] == "fbise"
     assert "PRIVATE_JSONL_CONTENT" not in json.dumps(dict(accepted_audit))
 
     errors = [
@@ -96,8 +101,13 @@ async def test_accepted_and_rejected_jsonl_actions_are_auditable_without_source_
     rejected_audit = await conn.fetchrow(
         "SELECT after_value FROM admin_audit_logs WHERE after_value->>'outcome' = 'rejected' ORDER BY created_at DESC LIMIT 1;"
     )
-    assert rejected_audit["after_value"]["error_code"] == "JSONL_SCOPE_MISMATCH"
-    assert rejected_audit["after_value"]["chapter_id"] == "ch_1"
+    rejected_after_val = (
+        json.loads(rejected_audit["after_value"])
+        if isinstance(rejected_audit["after_value"], str)
+        else rejected_audit["after_value"]
+    )
+    assert rejected_after_val["error_code"] == "JSONL_SCOPE_MISMATCH"
+    assert rejected_after_val["chapter_id"] == "ch_1"
     assert "PRIVATE_JSONL_CONTENT_REJECTED" not in json.dumps(dict(rejected_audit))
 
 
