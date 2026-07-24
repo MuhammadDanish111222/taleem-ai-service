@@ -127,6 +127,7 @@ async def test_audit_repository_sanitization_without_database():
     repo = AuditRepository(mock_conn)
     sensitive_source = "SECRET_RAW_JSONL_WITH_CHUNK_TEXT_AND_EXPECTED_QUESTIONS"
     import hashlib
+
     source_hash = hashlib.sha256(sensitive_source.encode()).hexdigest()
 
     result = await repo.create_jsonl_ingestion_audit(
@@ -165,4 +166,3 @@ async def test_audit_repository_sanitization_without_database():
     assert "chunk_text" not in serialized
     assert "expected_questions" not in serialized
     assert "secret" not in serialized.lower()
-

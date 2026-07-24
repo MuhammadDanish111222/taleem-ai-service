@@ -346,4 +346,3 @@ async def test_rejects_blank_or_whitespace_only_chunk_text():
             and e.get("reason") == "missing_or_empty_chunk_text"
             for e in errors
         )
-
