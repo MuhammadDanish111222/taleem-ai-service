@@ -113,7 +113,7 @@ async def test_malformed_fields_rejection():
         '"content_type":"explanation","chunk_text":"Text 2","page_range":[1,5]}'
     )
 
-    chunks, errors = await validate_and_parse_jsonl(raw_jsonl, firestore_db=None)
+    chunks, errors = await validate_and_parse_jsonl(raw_jsonl, firestore_db=None, allow_mock_validation_for_tests=True)
 
     assert chunks == []
     assert len(errors) >= 2
@@ -139,7 +139,7 @@ async def test_error_log_sanitization():
     # Missing required field chapter_id will fail JSON schema, check raw text not in error dict
     raw_jsonl_bad = raw_jsonl.replace('"chapter_id":"ch_1",', '')
 
-    chunks, errors = await validate_and_parse_jsonl(raw_jsonl_bad, firestore_db=None)
+    chunks, errors = await validate_and_parse_jsonl(raw_jsonl_bad, firestore_db=None, allow_mock_validation_for_tests=True)
 
     assert chunks == []
     assert len(errors) > 0

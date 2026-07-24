@@ -43,6 +43,7 @@ async def check_firestore_hierarchy(
     subject_id: str,
     chapter_id: str,
     cache: Dict[Tuple[str, str, str, str], bool],
+    allow_mock_validation_for_tests: bool = False,
 ) -> bool:
     """Checks full ancestor chain in Firestore: board -> class -> subject -> chapter.
 
@@ -54,9 +55,10 @@ async def check_firestore_hierarchy(
         return cache[key]
 
     if firestore_db is None:
-        # If no firestore client provided (e.g. unit tests without firestore), assume valid
-        cache[key] = True
-        return True
+        if allow_mock_validation_for_tests:
+            cache[key] = True
+            return True
+        raise RuntimeError("Firestore DB instance is required for catalogue hierarchy verification.")
 
     try:
         # 1. Board check
@@ -113,7 +115,8 @@ async def check_firestore_hierarchy(
 
 async def validate_and_parse_jsonl(
     raw_content: str,
-    firestore_db: Optional[Any] = None
+    firestore_db: Optional[Any] = None,
+    allow_mock_validation_for_tests: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Validates line-by-line JSONL input for admin chunk ingestion.
 
@@ -236,7 +239,13 @@ async def validate_and_parse_jsonl(
             and isinstance(chapter_id, str)
         ):
             hierarchy_valid = await check_firestore_hierarchy(
-                firestore_db, board_id, class_id, subject_id, chapter_id, hierarchy_cache
+                firestore_db,
+                board_id,
+                class_id,
+                subject_id,
+                chapter_id,
+                hierarchy_cache,
+                allow_mock_validation_for_tests=allow_mock_validation_for_tests,
             )
             if not hierarchy_valid:
                 errors.append({"row": row_idx, "field": "chapter_id", "reason": "unknown_or_inactive_catalogue_hierarchy"})

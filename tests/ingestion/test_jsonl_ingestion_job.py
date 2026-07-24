@@ -9,7 +9,7 @@ import asyncio
 import pytest
 import asyncpg
 
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from app.workers.handlers.jsonl_ingest import handle_jsonl_ingest
 from app.repositories.rag_repository import RagRepository
 
@@ -18,8 +18,12 @@ DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:543
 
 @pytest.fixture(autouse=True)
 def mock_firestore_hierarchy_check():
-    """Mocks Firestore hierarchy check to return True for test UUIDs during DB integration tests."""
-    with patch("app.services.ingestion.jsonl_chunks.check_firestore_hierarchy", return_value=True):
+    """Mocks Firebase app and Firestore hierarchy check to return True for test UUIDs during DB integration tests."""
+    mock_db = MagicMock()
+    mock_app = patch("app.workers.handlers.jsonl_ingest.get_firebase_app", return_value=object())
+    mock_client = patch("firebase_admin.firestore.client", return_value=mock_db)
+    mock_check = patch("app.services.ingestion.jsonl_chunks.check_firestore_hierarchy", return_value=True)
+    with mock_app, mock_client, mock_check:
         yield
 
 
@@ -309,4 +313,65 @@ async def test_jsonl_ingest_idempotency_key_replay(conn):
     assert d_ver_count_2 == d_ver_count_1
     assert chunk_count_2 == chunk_count_1
     assert q_count_2 == q_count_1
+
+
+@pytest.mark.asyncio
+async def test_jsonl_ingest_fails_when_firestore_unavailable(conn):
+    """If get_firebase_app() fails/returns None, handle_jsonl_ingest MUST fail loudly with RuntimeError."""
+    board_id = f"b_fail_{uuid.uuid4().hex[:6]}"
+    class_id = f"c_fail_{uuid.uuid4().hex[:6]}"
+    subject_id = f"s_fail_{uuid.uuid4().hex[:6]}"
+    chapter_id = f"ch_fail_{uuid.uuid4().hex[:6]}"
+
+    raw_jsonl = (
+        f'{{"board_id":"{board_id}","class_id":"{class_id}","subject_id":"{subject_id}","chapter_id":"{chapter_id}",'
+        f'"topic_no":"1.1","topic_title":"Title","chunk_order":0,"content_type":"explanation",'
+        f'"chunk_text":"Content","expected_questions":[],"page_range":[1,2]}}'
+    )
+    job = {"id": str(uuid.uuid4()), "job_type": "jsonl_ingest", "payload": {"jsonl_content": raw_jsonl}}
+
+    with patch("app.workers.handlers.jsonl_ingest.get_firebase_app", return_value=None):
+        with pytest.raises(RuntimeError, match="Firestore client unavailable for mandatory catalogue hierarchy verification"):
+            await handle_jsonl_ingest(job, conn)
+
+
+@pytest.mark.asyncio
+async def test_jsonl_ingest_handler_direct_reexecution_idempotency(conn):
+    """Directly invoking handle_jsonl_ingest twice for identical job payload succeeds without crashing on unique constraint."""
+    board_id = f"b_direct_{uuid.uuid4().hex[:6]}"
+    class_id = f"c_direct_{uuid.uuid4().hex[:6]}"
+    subject_id = f"s_direct_{uuid.uuid4().hex[:6]}"
+    chapter_id = f"ch_direct_{uuid.uuid4().hex[:6]}"
+
+    raw_jsonl = (
+        f'{{"board_id":"{board_id}","class_id":"{class_id}","subject_id":"{subject_id}","chapter_id":"{chapter_id}",'
+        f'"topic_no":"1.1","topic_title":"Direct Retry","chunk_order":0,"content_type":"explanation",'
+        f'"chunk_text":"Direct retry text content.","expected_questions":["Q direct?"],"page_range":[1,2]}}'
+    )
+    job = {"id": str(uuid.uuid4()), "job_type": "jsonl_ingest", "payload": {"jsonl_content": raw_jsonl}}
+
+    # First direct handler run
+    res1 = await handle_jsonl_ingest(job, conn)
+    assert res1["status"] == "succeeded"
+    assert res1["chunks_ingested"] == 1
+    doc_ver_id1 = res1["document_version_id"]
+
+    # Record counts after first run
+    d_count_1 = await conn.fetchval("SELECT COUNT(*) FROM rag_document_versions WHERE id = $1::uuid;", doc_ver_id1)
+    c_count_1 = await conn.fetchval("SELECT COUNT(*) FROM rag_chunks WHERE document_version_id = $1::uuid;", doc_ver_id1)
+
+    # Second direct handler run with identical payload (simulating worker retry after lease timeout)
+    res2 = await handle_jsonl_ingest(job, conn)
+    assert res2["status"] == "succeeded"
+    assert res2["chunks_ingested"] == 1
+    assert res2["document_version_id"] == doc_ver_id1
+
+    # Record counts after second run
+    d_count_2 = await conn.fetchval("SELECT COUNT(*) FROM rag_document_versions WHERE id = $1::uuid;", doc_ver_id1)
+    c_count_2 = await conn.fetchval("SELECT COUNT(*) FROM rag_chunks WHERE document_version_id = $1::uuid;", doc_ver_id1)
+
+    # Assert document version and chunk count remain unchanged (1 doc version, 1 chunk)
+    assert d_count_1 == 1 and d_count_2 == 1
+    assert c_count_1 == 1 and c_count_2 == 1
+
 

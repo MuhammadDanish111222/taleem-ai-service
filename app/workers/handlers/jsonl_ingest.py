@@ -36,7 +36,10 @@ async def handle_jsonl_ingest(job: Dict[str, Any], conn: asyncpg.Connection) -> 
             from firebase_admin import firestore
             firestore_db = firestore.client()
     except Exception as fb_err:
-        logger.warning(f"Firestore client not initialized for hierarchy checks: {fb_err}")
+        logger.error(f"Firestore client initialization failed: {fb_err}")
+
+    if firestore_db is None:
+        raise RuntimeError("Firebase Admin / Firestore client unavailable for mandatory catalogue hierarchy verification.")
 
     # Step 1: Validate and parse JSONL
     valid_chunks, errors = await validate_and_parse_jsonl(jsonl_content, firestore_db)
