@@ -93,3 +93,20 @@ To prevent race conditions, duplicate version generation, and database deadlocks
 - **Phase 3C (Chunk Ingestion)**: Locks `rag_corpora` to check/create the single `building` corpus version for a subject scope, then locks `rag_corpus_versions` to verify `status == 'building'` before replacing chapter chunks and expected questions.
 - **Phase 3F (Activation Engine)**: When activating or superseding corpus versions, Phase 3F **MUST** follow this exact lock order (locking `rag_corpora` before modifying `rag_corpus_versions`) to guarantee deadlock-free execution against concurrent chunk ingestion workers.
 
+---
+
+## 6. Known Gaps Identified for Future Phases
+
+The following open questions were identified during Phase 3C closeout review against the build guide. They are recorded here for whoever scopes Phases 3D, 3E, and 7A — no implementation action is required now.
+
+### Visual Pipeline (no assigned phase)
+
+The `rag_visuals` table exists in the schema but the current JSONL ingestion path (`admin_jsonl_v1`) does not populate it. Later phases (3E retrieval, 3F activation/QA, 4A answer generation, 4E citations, 4F visual rendering) reference visual-element functionality that depends on these rows existing. For content ingested via the admin JSONL path, visual retrieval should be treated as **deferred/optional** until the automated PDF-layout extraction pipeline exists. Per the build guide's own MVP v1 decision: *"revisit automated extraction once manual chunking becomes the bottleneck on content-addition speed, or once visual/flowchart retrieval is needed."*
+
+### Expected-Question Embeddings (Phase 3D / 3E gap)
+
+The `chunk_expected_questions` table exists and Phase 3C populates question text rows with `embedding = NULL`. However, neither Phase 3D (embedding generation) nor Phase 3E (retrieval query engine) as currently described explicitly addresses generating embeddings for these rows or including them as a retrieval signal. Whoever scopes Phase 3D should decide whether expected-question embedding is part of the same batch-embedding job that handles `rag_chunks.embedding`, and whoever scopes Phase 3E should decide whether expected-question vector similarity is a retrieval pathway (and if so, how it fuses with chunk-text dense/lexical scores).
+
+### Retrieval Settings Granularity (Phase 7A gap)
+
+Phase 7A's typed settings service is described as managing "retrieval top K" generically, but the actual retrieval pipeline (Phase 3E) will require several distinct sub-parameters: dense candidate count, lexical candidate count, expected-question candidate count, evidence-sufficiency thresholds, per-document result caps, and the RRF (Reciprocal Rank Fusion) constant. None of these are individually named in the current Phase 7A specification. Whoever scopes Phase 7A should enumerate and type these parameters explicitly so the settings service covers the full retrieval configuration surface.
