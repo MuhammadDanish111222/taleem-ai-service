@@ -1,16 +1,20 @@
-from fastapi import APIRouter, Depends, Header
+import logging
 from typing import Optional
+
+from fastapi import APIRouter, Depends, Header
+
 from app.core.config import Settings, get_settings
 from app.core.internal_auth import verify_internal_jwt
-import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 @router.get("/health")
 async def health_check(settings: Settings = Depends(get_settings)):
     return {"status": "ok", "service_name": settings.APP_NAME}
+
 
 @router.get("/ready")
 async def readiness_check(authorization: Optional[str] = Header(None)):
@@ -22,7 +26,7 @@ async def readiness_check(authorization: Optional[str] = Header(None)):
             logger.info(f"Readiness check called with token for uid: {uid}")
         except Exception as e:
             logger.warning(f"Optional token verification failed on /ready: {e}")
-            
+
     response = {"status": "ready"}
     if uid:
         response["uid"] = uid

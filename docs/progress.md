@@ -46,7 +46,7 @@ This document serves as a persistent record of the progress made on the Python-b
 - **Status:** Completed
 - **Details:**
   - **Schema Adjustments**: Executed migration `0003b_jsonl_schema_adjustments.sql`, dropping `NOT NULL` on `chunk_expected_questions.embedding` and adding `content_type`, `metadata`, `content_hash`, `language`, and `token_count` to `rag_chunks`.
-  - **Validation Module**: Built `app/services/ingestion/jsonl_chunks.py` providing SHA256 content hashing (`compute_content_hash`), word token counting (`count_tokens`), line-by-line schema validation, strict `page_range` tuple checks (`null` or `[start_page, end_page]`), and sanitized error logging (raw text excluded).
+  - **Validation Module**: Built `app/services/ingestion/jsonl_chunks.py` providing SHA256 content hashing (`compute_content_hash`), line-by-line schema validation, strict `page_range` tuple checks (`null` or `[start_page, end_page]`), and sanitized error logging (raw text excluded).
   - **Firestore Hierarchy Verification**: Implemented 4-level ancestor chain check (`check_firestore_hierarchy`) verifying document existence and `active == True` across `boards`, `classes`, `subjects`, and `chapters` with in-memory batch caching. Requires live Firestore client or raises loud `RuntimeError` if unavailable.
   - **Repository Atomic Operations**: Updated `RagRepository` with `get_or_create_building_corpus_version` (holding parent `rag_corpora` row lock via `ON CONFLICT DO UPDATE` + `FOR UPDATE`) and `replace_chapter_chunks` (locking corpus version `FOR UPDATE`, deleting old chunks/questions via CASCADE, inserting new rows, updating `expected_chunk_count` by delta, and reconciling `embedded_chunk_count`).
   - **Worker Job Handler**: Registered `jsonl_ingest` handler in `app/workers/handlers/jsonl_ingest.py` and `app/workers/main.py`.
@@ -55,4 +55,11 @@ This document serves as a persistent record of the progress made on the Python-b
   - `tests/ingestion/test_jsonl_validation.py` verifying field mapping, error sanitization, and hierarchy rejection.
   - `tests/ingestion/test_jsonl_ingestion_job.py` verifying job execution, atomic chapter re-upload replacement, multi-chapter corpus accumulation, status locks, first-insert race prevention, explicit idempotency-key replay zero-row creation, handler direct re-execution idempotency, and loud failure when Firestore is unavailable.
   - 100% test pass rate across 3 consecutive pytest runs (59 passed in 98s).
+
+## Phase 3C follow-up: security, validation and audit hardening
+- JSONL submission now validates one complete board/class/subject/chapter scope before enqueueing; mixed-scope uploads fail atomically with `JSONL_SCOPE_MISMATCH`.
+- Every row is rechecked against the Firestore ancestor chain. Empty input, blank chunk text, invalid expected-question arrays, blank/normalized-duplicate questions, and duplicate chapter chunk order are rejected without storing source text in errors or audits.
+- Accepted job creation and its PostgreSQL audit record share one transaction. Rejected actions store only actor, request/job identifiers, scope, outcome, stable error code, and hashes—never raw JSONL, chunk text, expected-question text, secrets, or stack traces.
+- New JSONL token counts use the configured embedding tokenizer only (default `BAAI/bge-base-en-v1.5@main`); existing stored counts are unchanged and require chapter re-ingestion to update.
+- Each expected question remains an individual `chunk_expected_questions` row with its own future embedding slot. Phase 3D remains incomplete and must embed both chunk text and every expected-question row.
 

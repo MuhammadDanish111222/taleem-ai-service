@@ -1,9 +1,14 @@
 import os
-import pytest
+
 import asyncpg
+import pytest
+
 from app.db.migrator import run_migrations
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
+DB_URL = os.getenv(
+    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev"
+)
+
 
 @pytest.fixture
 async def conn():
@@ -26,9 +31,11 @@ async def test_migrations_execution_and_idempotency():
         # Subsequent run should apply 0 new migrations
         applied_second = await run_migrations(connection)
         assert applied_second == []
-        
+
         # Verify schema_migrations table contains all 3 migrations
-        rows = await connection.fetch("SELECT version FROM schema_migrations ORDER BY version;")
+        rows = await connection.fetch(
+            "SELECT version FROM schema_migrations ORDER BY version;"
+        )
         versions = [r["version"] for r in rows]
         assert "0001_platform_core.sql" in versions
         assert "0002_rag_schema.sql" in versions
@@ -76,7 +83,7 @@ async def test_single_active_corpus_version_constraint(conn):
         INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, status)
         VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'active');
         """,
-        corpus_id
+        corpus_id,
     )
 
     # 3. Attempting to insert a second active version for same corpus must fail with UniqueViolationError
@@ -86,8 +93,9 @@ async def test_single_active_corpus_version_constraint(conn):
             INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, status)
             VALUES ($1, 2, 'text-embedding-3-small', 'v1', 768, 'active');
             """,
-            corpus_id
+            corpus_id,
         )
+
 
 @pytest.mark.asyncio
 async def test_foreign_key_on_delete_cascade_and_set_null(conn):
@@ -101,9 +109,9 @@ async def test_foreign_key_on_delete_cascade_and_set_null(conn):
         INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, status)
         VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'active') RETURNING id;
         """,
-        corpus["id"]
+        corpus["id"],
     )
-    
+
     # Create request with corpus_version_id
     req = await conn.fetchrow(
         """
@@ -111,28 +119,33 @@ async def test_foreign_key_on_delete_cascade_and_set_null(conn):
         VALUES ('bise_lahore', 'class_10', 'chemistry', 'en', 'concise', 'What is water?', 'what is water', 'hash123', $1, 'completed')
         RETURNING id;
         """,
-        cv["id"]
+        cv["id"],
     )
-    
+
     # Create answer
     await conn.execute(
         "INSERT INTO ai_answers (request_id, answer_text) VALUES ($1, 'H2O');",
-        req["id"]
+        req["id"],
     )
-    
+
     # Delete corpus version
     await conn.execute("DELETE FROM rag_corpus_versions WHERE id = $1;", cv["id"])
-    
+
     # Verify ai_requests.corpus_version_id was set to NULL (ON DELETE SET NULL)
-    req_updated = await conn.fetchrow("SELECT corpus_version_id FROM ai_requests WHERE id = $1;", req["id"])
+    req_updated = await conn.fetchrow(
+        "SELECT corpus_version_id FROM ai_requests WHERE id = $1;", req["id"]
+    )
     assert req_updated["corpus_version_id"] is None
-    
+
     # Delete request
     await conn.execute("DELETE FROM ai_requests WHERE id = $1;", req["id"])
-    
+
     # Verify answer was cascade deleted (ON DELETE CASCADE)
-    ans_updated = await conn.fetchrow("SELECT id FROM ai_answers WHERE request_id = $1;", req["id"])
+    ans_updated = await conn.fetchrow(
+        "SELECT id FROM ai_answers WHERE request_id = $1;", req["id"]
+    )
     assert ans_updated is None
+
 
 ALL_TABLES = [
     "job_queue",
@@ -151,6 +164,7 @@ ALL_TABLES = [
     "provider_attempts",
 ]
 
+
 @pytest.mark.asyncio
 async def test_rls_deny_by_default_grants():
     """Verifies that anon and authenticated roles receive 42501 permission denied on all 14 application tables."""
@@ -161,7 +175,9 @@ async def test_rls_deny_by_default_grants():
         for table in ALL_TABLES:
             with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
                 await anon_conn.fetch(f"SELECT * FROM public.{table};")
-            assert exc_info.value.sqlstate == "42501", f"Expected 42501 for anon role on table {table}, got {exc_info.value.sqlstate}"
+            assert exc_info.value.sqlstate == "42501", (
+                f"Expected 42501 for anon role on table {table}, got {exc_info.value.sqlstate}"
+            )
     finally:
         await anon_conn.close()
 
@@ -172,9 +188,12 @@ async def test_rls_deny_by_default_grants():
         for table in ALL_TABLES:
             with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
                 await auth_conn.fetch(f"SELECT * FROM public.{table};")
-            assert exc_info.value.sqlstate == "42501", f"Expected 42501 for authenticated role on table {table}, got {exc_info.value.sqlstate}"
+            assert exc_info.value.sqlstate == "42501", (
+                f"Expected 42501 for authenticated role on table {table}, got {exc_info.value.sqlstate}"
+            )
     finally:
         await auth_conn.close()
+
 
 @pytest.mark.asyncio
 async def test_rls_deny_write_access():
@@ -184,7 +203,9 @@ async def test_rls_deny_write_access():
     try:
         await anon_conn.execute("SET ROLE anon; SET search_path = public;")
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await anon_conn.execute("INSERT INTO public.job_queue (job_type, payload) VALUES ('test_job', '{}');")
+            await anon_conn.execute(
+                "INSERT INTO public.job_queue (job_type, payload) VALUES ('test_job', '{}');"
+            )
         assert exc_info.value.sqlstate == "42501"
     finally:
         await anon_conn.close()
@@ -194,7 +215,9 @@ async def test_rls_deny_write_access():
     try:
         await auth_conn.execute("SET ROLE authenticated; SET search_path = public;")
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
-            await auth_conn.execute("UPDATE public.ai_requests SET status = 'completed';")
+            await auth_conn.execute(
+                "UPDATE public.ai_requests SET status = 'completed';"
+            )
         assert exc_info.value.sqlstate == "42501"
 
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:
@@ -202,8 +225,6 @@ async def test_rls_deny_write_access():
         assert exc_info.value.sqlstate == "42501"
     finally:
         await auth_conn.close()
-
-
 
 
 @pytest.mark.asyncio
@@ -225,4 +246,3 @@ async def test_provider_attempts_check_constraints(conn):
                 VALUES ('openai', 'gpt-4o', 'invalid_status');
                 """
             )
-

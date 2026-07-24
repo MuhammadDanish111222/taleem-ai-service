@@ -4,9 +4,22 @@ Environment: Verified against a mocked Firestore client (unittest.mock.MagicMock
 """
 
 import json
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from app.services.ingestion.jsonl_chunks import validate_and_parse_jsonl
+
+
+class FakeTokenCounter:
+    method = "test_tokenizer"
+    version = "test_tokenizer:fixture@v1"
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
+FAKE_COUNTER = FakeTokenCounter()
 
 
 def create_mock_firestore(active_chain: bool = True):
@@ -54,7 +67,9 @@ async def test_valid_jsonl_parsing():
         '"expected_questions":["Define SI units."],"page_range":[6,10],"language":"en"}'
     )
 
-    chunks, errors = await validate_and_parse_jsonl(raw_jsonl, mock_db)
+    chunks, errors = await validate_and_parse_jsonl(
+        raw_jsonl, mock_db, token_counter=FAKE_COUNTER
+    )
 
     assert errors == []
     assert len(chunks) == 2
@@ -93,7 +108,9 @@ async def test_inactive_chapter_rejection():
         '"content_type":"explanation","chunk_text":"Sample text","expected_questions":[],"page_range":[1,2]}'
     )
 
-    chunks, errors = await validate_and_parse_jsonl(raw_jsonl, mock_db)
+    chunks, errors = await validate_and_parse_jsonl(
+        raw_jsonl, mock_db, token_counter=FAKE_COUNTER
+    )
 
     assert chunks == []
     assert len(errors) == 1
@@ -113,7 +130,12 @@ async def test_malformed_fields_rejection():
         '"content_type":"explanation","chunk_text":"Text 2","page_range":[1,5]}'
     )
 
-    chunks, errors = await validate_and_parse_jsonl(raw_jsonl, firestore_db=None, allow_mock_validation_for_tests=True)
+    chunks, errors = await validate_and_parse_jsonl(
+        raw_jsonl,
+        firestore_db=None,
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
 
     assert chunks == []
     assert len(errors) >= 2
@@ -137,11 +159,190 @@ async def test_error_log_sanitization():
         '"content_type":"explanation","chunk_text":"SECRET_SENSITIVE_TEXT_12345"}'
     )
     # Missing required field chapter_id will fail JSON schema, check raw text not in error dict
-    raw_jsonl_bad = raw_jsonl.replace('"chapter_id":"ch_1",', '')
+    raw_jsonl_bad = raw_jsonl.replace('"chapter_id":"ch_1",', "")
 
-    chunks, errors = await validate_and_parse_jsonl(raw_jsonl_bad, firestore_db=None, allow_mock_validation_for_tests=True)
+    chunks, errors = await validate_and_parse_jsonl(
+        raw_jsonl_bad,
+        firestore_db=None,
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
 
     assert chunks == []
     assert len(errors) > 0
     errors_json = json.dumps(errors)
     assert "SECRET_SENSITIVE_TEXT_12345" not in errors_json
+
+
+@pytest.mark.asyncio
+async def test_rejects_empty_mixed_scope_and_invalid_expected_questions_without_source_text():
+    empty_chunks, empty_errors = await validate_and_parse_jsonl(
+        " \n", allow_mock_validation_for_tests=True, token_counter=FAKE_COUNTER
+    )
+    assert empty_chunks == []
+    assert empty_errors[0]["code"] == "EMPTY_JSONL"
+
+    rows = [
+        {
+            "board_id": "fbise",
+            "class_id": "class_9",
+            "subject_id": "physics",
+            "chapter_id": "ch_1",
+            "topic_no": "1",
+            "topic_title": "One",
+            "chunk_order": 0,
+            "content_type": "explanation",
+            "chunk_text": "safe one",
+            "expected_questions": ["What is force?"],
+        },
+        {
+            "board_id": "fbise",
+            "class_id": "class_9",
+            "subject_id": "physics",
+            "chapter_id": "ch_2",
+            "topic_no": "2",
+            "topic_title": "Two",
+            "chunk_order": 0,
+            "content_type": "explanation",
+            "chunk_text": "safe two",
+            "expected_questions": ["What is mass?"],
+        },
+    ]
+    chunks, errors = await validate_and_parse_jsonl(
+        "\n".join(json.dumps(row) for row in rows),
+        firestore_db=None,
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert chunks == []
+    assert any(
+        error["code"] == "JSONL_SCOPE_MISMATCH" and error["row"] == 2
+        for error in errors
+    )
+
+    bad_questions = dict(
+        rows[0], expected_questions=["  ", "What is force?", " what  is  force? "]
+    )
+    chunks, errors = await validate_and_parse_jsonl(
+        json.dumps(bad_questions),
+        firestore_db=None,
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert chunks == []
+    assert {error["reason"] for error in errors} >= {
+        "blank_or_non_string_question",
+        "duplicate_question_in_chunk",
+    }
+
+
+@pytest.mark.asyncio
+async def test_rejects_duplicate_chunk_order_and_requires_expected_questions_array():
+    base = {
+        "board_id": "fbise",
+        "class_id": "class_9",
+        "subject_id": "physics",
+        "chapter_id": "ch_1",
+        "topic_no": "1",
+        "topic_title": "One",
+        "chunk_order": 0,
+        "content_type": "explanation",
+        "chunk_text": "safe",
+    }
+    with_questions = dict(base, expected_questions=[])
+    chunks, errors = await validate_and_parse_jsonl(
+        "\n".join(
+            [json.dumps(with_questions), json.dumps(dict(with_questions, topic_no="2"))]
+        ),
+        firestore_db=None,
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert chunks == []
+    assert any(error["reason"] == "duplicate_chunk_order_in_batch" for error in errors)
+
+    chunks, errors = await validate_and_parse_jsonl(
+        json.dumps(base),
+        firestore_db=None,
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert chunks == []
+    assert any(
+        error["field"] == "expected_questions" and error["reason"] == "must_be_array"
+        for error in errors
+    )
+
+
+@pytest.mark.asyncio
+async def test_rejects_scope_mismatch_across_all_four_hierarchy_ids():
+    """Asserts that varying board_id, class_id, subject_id, or chapter_id across rows triggers JSONL_SCOPE_MISMATCH."""
+    base_row = {
+        "board_id": "fbise",
+        "class_id": "class_9",
+        "subject_id": "physics",
+        "chapter_id": "ch_1",
+        "topic_no": "1",
+        "topic_title": "Title",
+        "chunk_order": 0,
+        "content_type": "explanation",
+        "chunk_text": "Content",
+        "expected_questions": [],
+    }
+
+    # Test varying board_id
+    row_board_mismatch = dict(base_row, board_id="bise_lahore", chunk_order=1)
+    _, errors = await validate_and_parse_jsonl(
+        "\n".join([json.dumps(base_row), json.dumps(row_board_mismatch)]),
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert any(e.get("code") == "JSONL_SCOPE_MISMATCH" for e in errors)
+
+    # Test varying class_id
+    row_class_mismatch = dict(base_row, class_id="class_10", chunk_order=1)
+    _, errors = await validate_and_parse_jsonl(
+        "\n".join([json.dumps(base_row), json.dumps(row_class_mismatch)]),
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert any(e.get("code") == "JSONL_SCOPE_MISMATCH" for e in errors)
+
+    # Test varying subject_id
+    row_subject_mismatch = dict(base_row, subject_id="chemistry", chunk_order=1)
+    _, errors = await validate_and_parse_jsonl(
+        "\n".join([json.dumps(base_row), json.dumps(row_subject_mismatch)]),
+        allow_mock_validation_for_tests=True,
+        token_counter=FAKE_COUNTER,
+    )
+    assert any(e.get("code") == "JSONL_SCOPE_MISMATCH" for e in errors)
+
+
+@pytest.mark.asyncio
+async def test_rejects_blank_or_whitespace_only_chunk_text():
+    """Asserts that empty or whitespace-only chunk_text is explicitly rejected with missing_or_empty_chunk_text."""
+    base_row = {
+        "board_id": "fbise",
+        "class_id": "class_9",
+        "subject_id": "physics",
+        "chapter_id": "ch_1",
+        "topic_no": "1",
+        "topic_title": "Title",
+        "chunk_order": 0,
+        "content_type": "explanation",
+        "expected_questions": [],
+    }
+
+    for text in ["", "   ", "\n\t  "]:
+        row = dict(base_row, chunk_text=text)
+        chunks, errors = await validate_and_parse_jsonl(
+            json.dumps(row),
+            allow_mock_validation_for_tests=True,
+            token_counter=FAKE_COUNTER,
+        )
+        assert chunks == []
+        assert any(
+            e.get("field") == "chunk_text"
+            and e.get("reason") == "missing_or_empty_chunk_text"
+            for e in errors
+        )

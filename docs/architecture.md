@@ -42,7 +42,7 @@ This document provides the definitive architectural design, database schema spec
      content_tsvector tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED
      ```
 5. **`rag_visuals`**: Visual elements (`diagram`, `table`, `equation`, `figure`) linked to chunks with `ON DELETE CASCADE`.
-6. **`chunk_expected_questions`**: MVP v1 expected questions table with individual `vector(768)` embedding per question row.
+6. **`chunk_expected_questions`**: One expected question per row with an individual nullable `vector(768)` embedding slot. Phase 3C rejects blank and normalized-duplicate questions and the database enforces uniqueness per chunk.
 7. **`approved_question_bank`**: Lightweight approved question/answer bank table.
 8. **`solved_papers`**: Solved past paper snapshots linking `year`, `session`, `questions` (JSONB) to corpus versions.
 
@@ -105,7 +105,11 @@ The `rag_visuals` table exists in the schema (`0002_rag_schema.sql`) but is an *
 
 ### Expected-Question Embeddings (Phase 3D / 3E gap)
 
-The `chunk_expected_questions` table exists and Phase 3C populates question text rows with `embedding = NULL`. However, neither Phase 3D (embedding generation) nor Phase 3E (retrieval query engine) as currently described explicitly addresses generating embeddings for these rows or including them as a retrieval signal. Whoever scopes Phase 3D should decide whether expected-question embedding is part of the same batch-embedding job that handles `rag_chunks.embedding`, and whoever scopes Phase 3E should decide whether expected-question vector similarity is a retrieval pathway (and if so, how it fuses with chunk-text dense/lexical scores).
+The `chunk_expected_questions` table exists and Phase 3C populates one question-text row per question with `embedding = NULL`. Phase 3D must embed both (1) every `rag_chunks.content` value and (2) every individual `chunk_expected_questions.question_text` row; its completion tracking must cover both populations. Phase 3E must then explicitly decide how expected-question similarity is used alongside chunk-text retrieval.
+
+### Token-count contract (Phase 3C)
+
+New JSONL chunks use the configured embedding tokenizer (`EMBEDDING_MODEL` and `EMBEDDING_MODEL_REVISION`, default `BAAI/bge-base-en-v1.5@main`) without loading the embedding model. The tokenizer method/version is stored in chunk metadata. Existing stored counts are not rewritten by this change; re-ingest a chapter when its historical counts need to be recalculated.
 
 ### Retrieval Settings Granularity (Phase 7A gap)
 

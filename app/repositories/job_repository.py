@@ -1,8 +1,10 @@
 """Durable Job Queue Repository using Asyncpg and Explicit SQL."""
 
-from typing import Optional, Dict, Any, List
 import json
+from typing import Any, Dict, List, Optional
+
 import asyncpg
+
 
 class JobRepository:
     def __init__(self, conn: asyncpg.Connection):
@@ -13,7 +15,7 @@ class JobRepository:
         job_type: str,
         payload: Dict[str, Any],
         idempotency_key: Optional[str] = None,
-        max_attempts: int = 3
+        max_attempts: int = 3,
     ) -> Dict[str, Any]:
         """Queues a new background job with idempotency support."""
         query = """
@@ -31,7 +33,7 @@ class JobRepository:
         self,
         worker_id: str,
         supported_types: List[str],
-        lease_duration_seconds: int = 300
+        lease_duration_seconds: int = 300,
     ) -> Optional[Dict[str, Any]]:
         """Atomically leases a queued or retryable job using FOR UPDATE SKIP LOCKED."""
         query = """
@@ -73,7 +75,7 @@ class JobRepository:
         job_id: str,
         stage_or_worker: str,
         progress_or_stage: Any,
-        progress: Optional[float] = None
+        progress: Optional[float] = None,
     ) -> bool:
         """Updates job progress and stage. Enforces worker_id lock ownership when provided."""
         if progress is not None:
@@ -101,7 +103,7 @@ class JobRepository:
         self,
         job_id: str,
         worker_id_or_progress: Any = 100.0,
-        final_progress: float = 100.0
+        final_progress: float = 100.0,
     ) -> bool:
         """Marks a job as succeeded. Enforces worker_id lock ownership when provided as str."""
         if isinstance(worker_id_or_progress, str):
@@ -129,7 +131,7 @@ class JobRepository:
         error_message_or_code: str,
         retry_delay_or_message: Any = None,
         retry_delay_seconds: Optional[int] = None,
-        worker_id: Optional[str] = None
+        worker_id: Optional[str] = None,
     ) -> bool:
         """Fails a job or schedules it for retry depending on remaining attempts. Enforces lock ownership when worker_id passed."""
         job = await self.get_job(job_id)
@@ -140,17 +142,29 @@ class JobRepository:
             w_id = worker_id
             err_code = error_code_or_worker
             err_msg = error_message_or_code
-            delay = retry_delay_or_message if isinstance(retry_delay_or_message, (int, float)) else retry_delay_seconds
+            delay = (
+                retry_delay_or_message
+                if isinstance(retry_delay_or_message, (int, float))
+                else retry_delay_seconds
+            )
         elif job.get("locked_by") is not None:
             w_id = error_code_or_worker
             err_code = error_message_or_code
-            err_msg = str(retry_delay_or_message) if retry_delay_or_message is not None else ""
+            err_msg = (
+                str(retry_delay_or_message)
+                if retry_delay_or_message is not None
+                else ""
+            )
             delay = retry_delay_seconds
         else:
             w_id = None
             err_code = error_code_or_worker
             err_msg = error_message_or_code
-            delay = retry_delay_or_message if isinstance(retry_delay_or_message, (int, float)) else retry_delay_seconds
+            delay = (
+                retry_delay_or_message
+                if isinstance(retry_delay_or_message, (int, float))
+                else retry_delay_seconds
+            )
 
         if w_id is not None and job.get("locked_by") != w_id:
             return False
@@ -164,7 +178,9 @@ class JobRepository:
                     locked_by = NULL, locked_at = NULL, updated_at = NOW()
                 WHERE id = $1::uuid AND locked_by = $2 AND status IN ('leased', 'running');
                 """
-                result = await self.conn.execute(query, job_id, w_id, err_code, err_msg, str(delay))
+                result = await self.conn.execute(
+                    query, job_id, w_id, err_code, err_msg, str(delay)
+                )
             else:
                 query = """
                 UPDATE job_queue
@@ -173,7 +189,9 @@ class JobRepository:
                     locked_by = NULL, locked_at = NULL, updated_at = NOW()
                 WHERE id = $1::uuid;
                 """
-                result = await self.conn.execute(query, job_id, err_code, err_msg, str(delay))
+                result = await self.conn.execute(
+                    query, job_id, err_code, err_msg, str(delay)
+                )
         else:
             if w_id:
                 query = """
@@ -229,7 +247,9 @@ class JobRepository:
 
     async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Fetches a job by ID."""
-        row = await self.conn.fetchrow("SELECT * FROM job_queue WHERE id = $1::uuid;", job_id)
+        row = await self.conn.fetchrow(
+            "SELECT * FROM job_queue WHERE id = $1::uuid;", job_id
+        )
         return dict(row) if row else None
 
     @staticmethod

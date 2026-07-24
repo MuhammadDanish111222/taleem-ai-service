@@ -1,5 +1,11 @@
 # Taleem AI Service
 
+## Runtime
+
+Python 3.12 is the supported runtime (`.python-version`, `pyproject.toml`, and CI agree). Railway hosts the FastAPI API and durable worker. It receives only BFF-issued internal JWTs; browsers do not call this service directly.
+
+For JSONL token counts, configure `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION`, and `EMBEDDING_DIM` (the defaults are `BAAI/bge-base-en-v1.5`, `main`, and `768`). This loads the tokenizer only, not the embedding model.
+
 FastAPI AI microservice for the Taleem AI platform (`taleem-ai-service`).
 
 ## System Overview

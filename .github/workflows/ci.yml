@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, module-3/internal-auth-and-worker-runtime ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, module-3/internal-auth-and-worker-runtime ]
+    branches: [ main ]
 
 jobs:
   python-tests:
@@ -41,9 +41,15 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install dependencies
         run: uv sync
+      - name: Check formatting
+        run: uv run ruff format --check .
+      - name: Lint
+        run: uv run ruff check .
+      - name: Check migration from an empty pgvector database
+        run: uv run python scripts/migrate.py
       - name: Run pytest test suite
         run: uv run python -m pytest -v
 
@@ -81,7 +87,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install dependencies
         run: uv sync
       - name: Run worker runtime integration tests
@@ -121,7 +127,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install dependencies
         run: uv sync
       - name: Run database migrations
