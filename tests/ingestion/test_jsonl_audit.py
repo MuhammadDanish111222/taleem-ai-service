@@ -110,6 +110,7 @@ async def _validated(chunks, errors):
 async def test_audit_repository_sanitization_without_database():
     """Unit test: verifies AuditRepository sanitization payload structure with mocked connection."""
     from unittest.mock import AsyncMock, MagicMock
+
     from app.repositories.audit_repository import AuditRepository
 
     mock_conn = MagicMock()
