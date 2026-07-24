@@ -266,7 +266,9 @@ async def run_worker():
 
 asyncio.run(run_worker())
 """
-        proc = subprocess.Popen([sys.executable, "-c", code], env=os.environ.copy())
+        proc_env = os.environ.copy()
+        proc_env["PYTHONPATH"] = "."
+        proc = subprocess.Popen([sys.executable, "-c", code], env=proc_env)
 
         try:
             # Poll database until job status is 'leased' or 'running'

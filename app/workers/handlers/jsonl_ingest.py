@@ -19,6 +19,11 @@ async def handle_jsonl_ingest(job: Dict[str, Any], conn: asyncpg.Connection) -> 
     upserting, and atomic chunk replacement within a database transaction.
     """
     payload = job.get("payload") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
     jsonl_content = payload.get("jsonl_content") or ""
     if not jsonl_content or not isinstance(jsonl_content, str):
         raise ValueError("Missing or empty 'jsonl_content' in job payload.")

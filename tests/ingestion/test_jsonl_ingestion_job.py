@@ -258,3 +258,55 @@ async def test_first_ingestion_concurrent_corpus_creation_race():
 
     await conn1.close()
     await conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_jsonl_ingest_idempotency_key_replay(conn):
+    """Enqueuing and processing a job with an identical idempotency key returns existing job without creating duplicate rows."""
+    from app.services.jobs.queue import JobQueueService
+
+    board_id = f"b_idemp_{uuid.uuid4().hex[:6]}"
+    class_id = f"c_idemp_{uuid.uuid4().hex[:6]}"
+    subject_id = f"s_idemp_{uuid.uuid4().hex[:6]}"
+    chapter_id = f"ch_idemp_{uuid.uuid4().hex[:6]}"
+    idempotency_key = f"key_{uuid.uuid4().hex}"
+
+    raw_jsonl = (
+        f'{{"board_id":"{board_id}","class_id":"{class_id}","subject_id":"{subject_id}","chapter_id":"{chapter_id}",'
+        f'"topic_no":"1.1","topic_title":"Title","chunk_order":0,"content_type":"explanation",'
+        f'"chunk_text":"Idempotency test content.","expected_questions":["Idempotent question?"],"page_range":[1,2]}}'
+    )
+    payload = {"jsonl_content": raw_jsonl, "resource_version_id": "v1"}
+
+    service = JobQueueService(conn)
+    # First enqueue, lease, execution, and completion
+    job1 = await service.enqueue_job("jsonl_ingest", payload, idempotency_key=idempotency_key)
+    leased_job = await service.lease_next_job("worker-1", ["jsonl_ingest"])
+    res1 = await handle_jsonl_ingest(leased_job, conn)
+    await service.complete_job(str(job1["id"]), "worker-1")
+
+    # Record initial counts
+    c_ver_count_1 = await conn.fetchval("SELECT COUNT(*) FROM rag_corpus_versions;")
+    d_ver_count_1 = await conn.fetchval("SELECT COUNT(*) FROM rag_document_versions;")
+    chunk_count_1 = await conn.fetchval("SELECT COUNT(*) FROM rag_chunks;")
+    q_count_1 = await conn.fetchval("SELECT COUNT(*) FROM chunk_expected_questions;")
+
+    # Second enqueue attempt with EXACT SAME idempotency key
+    job2 = await service.enqueue_job("jsonl_ingest", payload, idempotency_key=idempotency_key)
+
+    # Assert job2 returned the original job record without creating a new job row
+    assert str(job2["id"]) == str(job1["id"])
+    assert job2["status"] == "succeeded"
+
+    # Record post-replay counts
+    c_ver_count_2 = await conn.fetchval("SELECT COUNT(*) FROM rag_corpus_versions;")
+    d_ver_count_2 = await conn.fetchval("SELECT COUNT(*) FROM rag_document_versions;")
+    chunk_count_2 = await conn.fetchval("SELECT COUNT(*) FROM rag_chunks;")
+    q_count_2 = await conn.fetchval("SELECT COUNT(*) FROM chunk_expected_questions;")
+
+    # Assert ZERO new rows created across all tables
+    assert c_ver_count_2 == c_ver_count_1
+    assert d_ver_count_2 == d_ver_count_1
+    assert chunk_count_2 == chunk_count_1
+    assert q_count_2 == q_count_1
+
