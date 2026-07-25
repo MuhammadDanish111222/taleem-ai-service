@@ -60,6 +60,9 @@ This document serves as a persistent record of the progress made on the Python-b
 - JSONL submission now validates one complete board/class/subject/chapter scope before enqueueing; mixed-scope uploads fail atomically with `JSONL_SCOPE_MISMATCH`.
 - Every row is rechecked against the Firestore ancestor chain. Empty input, blank chunk text, invalid expected-question arrays, blank/normalized-duplicate questions, and duplicate chapter chunk order are rejected without storing source text in errors or audits.
 - Accepted job creation and its PostgreSQL audit record share one transaction. Rejected actions store only actor, request/job identifiers, scope, outcome, stable error code, and hashes—never raw JSONL, chunk text, expected-question text, secrets, or stack traces.
-- New JSONL token counts use the configured embedding tokenizer only (default `BAAI/bge-base-en-v1.5@main`); existing stored counts are unchanged and require chapter re-ingestion to update.
-- Each expected question remains an individual `chunk_expected_questions` row with its own future embedding slot. Phase 3D remains incomplete and must embed both chunk text and every expected-question row.
+- In-memory unit test (`test_audit_repository_sanitization_without_database`) verifies payload structure and sanitization without requiring PostgreSQL connection.
+- New JSONL token counts use the configured embedding tokenizer only (default `BAAI/bge-base-en-v1.5` with 768 dimensions); existing stored counts are unchanged and require chapter re-ingestion to update.
+- Each expected question remains an individual `chunk_expected_questions` row with its own future embedding slot (`vector(768)`). Phase 3D remains incomplete and must embed both chunk text and every expected-question row.
+- Pull Request #3 merged into `main` (`03bd1aa`).
+- Executed full GitHub Actions CI run on `main` (`30124762501`) with 100% green pass rate across Ruff, 68 pytest suite, PostgreSQL/Redis worker tests, and worker startup smoke test.
 

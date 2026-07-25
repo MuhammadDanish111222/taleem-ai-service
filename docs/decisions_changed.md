@@ -65,4 +65,8 @@ This document logs significant architectural decisions and changes made for the 
   - Re-uploading a chapter replaces all chunks for that `document_version_id` inside a transaction. `expected_chunk_count` is updated by delta (`GREATEST(0, expected_chunk_count + delta)`), and `embedded_chunk_count` is reconciled directly from non-null embedding rows (`COUNT(*) WHERE embedding IS NOT NULL`).
 - **Decision:** Pre-Embedding Storage Support.
   - Migration `0003b_jsonl_schema_adjustments.sql` dropped `NOT NULL` on `chunk_expected_questions.embedding` to allow storing expected question strings prior to Phase 3D vector embedding generation.
+- **Decision:** Audit Log Content Sanitization & Payload Isolation.
+  - Audit repository records actor IDs, job IDs, scope metadata, outcomes, and SHA256 source hashes—never raw JSONL content, sensitive chunk texts, or expected question strings.
+- **Decision:** BAAI/bge-base-en-v1.5 Token Counting Model Choice.
+  - Configured `EMBEDDING_MODEL` as `BAAI/bge-base-en-v1.5` with `EMBEDDING_DIM = 768`, strictly matching the PostgreSQL `vector(768)` database schema across all RAG tables. Token counting loads only Hugging Face `AutoTokenizer` for `BAAI/bge-base-en-v1.5`, avoiding heavy model tensor loading.
 
