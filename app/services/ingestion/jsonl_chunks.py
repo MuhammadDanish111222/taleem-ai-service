@@ -26,7 +26,14 @@ VALID_LANGUAGES: Set[str] = {
     "mixed",
 }
 
-VALID_VISUAL_TYPES: Set[str] = {"diagram", "table", "equation", "figure"}
+VALID_VISUAL_TYPES: Set[str] = {
+    "diagram",
+    "figure",
+    "table",
+    "graph",
+    "chemical-structure",
+    "equation",
+}
 MAX_VISUAL_ID_LENGTH = 240
 MAX_VISUAL_TITLE_LENGTH = 240
 MAX_VISUAL_DESCRIPTION_LENGTH = 4000

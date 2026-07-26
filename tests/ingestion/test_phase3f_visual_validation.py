@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from app.services.ingestion.jsonl_chunks import validate_and_parse_jsonl
+from app.services.ingestion.jsonl_chunks import (
+    VALID_VISUAL_TYPES,
+    validate_and_parse_jsonl,
+)
 from app.services.ingestion.token_count import EmbeddingTokenCounter
 
 
@@ -93,3 +96,26 @@ async def test_jsonl_rejects_duplicate_visual_ids_without_echoing_key_or_descrip
     assert any(error["reason"] == "duplicate_visual_id_in_chunk" for error in errors)
     assert "drive-secret" not in encoded
     assert "secret description" not in encoded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("visual_type", sorted(VALID_VISUAL_TYPES))
+async def test_jsonl_accepts_each_supported_visual_type(visual_type: str):
+    _, errors = await validate_and_parse_jsonl(
+        _row(
+            [
+                {
+                    "visual_id": f"visual-{visual_type}",
+                    "visual_type": visual_type,
+                    "title": "Supported visual",
+                    "description": "A valid visual type.",
+                    "storage_key": "server-only-drive-key",
+                }
+            ]
+        ),
+        None,
+        allow_mock_validation_for_tests=True,
+        token_counter=COUNTER,
+    )
+
+    assert not errors
