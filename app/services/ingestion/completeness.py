@@ -40,6 +40,4 @@ async def handle_corpus_completeness(
         != str(payload.get("embedding_input_fingerprint") or "")
     ):
         return {"status": "stale_generation"}
-    return await confirm_corpus_completeness(
-        corpus_version_id, conn
-    )
+    return await confirm_corpus_completeness(corpus_version_id, conn)

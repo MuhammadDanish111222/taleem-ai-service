@@ -193,45 +193,131 @@ async def submit_jsonl_ingest(
 
 
 @router.post("/internal/admin/rag")
-async def local_admin_rag(request: RagAdminRequest, auth_context: AuthContext = Depends(verify_internal_jwt)):
+async def local_admin_rag(
+    request: RagAdminRequest, auth_context: AuthContext = Depends(verify_internal_jwt)
+):
     """Local-admin control plane. Responses use safe DTOs and never include vectors or keys."""
     if not auth_context.is_admin:
-        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN_NOT_ADMIN", "message": "Admin privileges required"})
-    scope = {"board_id": request.board_id, "class_id": request.class_id, "subject_id": request.subject_id}
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN_NOT_ADMIN",
+                "message": "Admin privileges required",
+            },
+        )
+    scope = {
+        "board_id": request.board_id,
+        "class_id": request.class_id,
+        "subject_id": request.subject_id,
+    }
     try:
         async with get_db_connection() as conn:
             service = LocalAdminService(conn)
             if request.operation == "overview":
                 return await service.overview(scope)
             if request.operation == "visual_stream_ref":
-                return await service.visual_stream_reference(version_id=request.corpus_version_id or "", scope=scope, visual_id=request.visual_id or "")
+                return await service.visual_stream_reference(
+                    version_id=request.corpus_version_id or "",
+                    scope=scope,
+                    visual_id=request.visual_id or "",
+                )
             if request.operation == "inspect_version":
-                return await service.inspect_version(version_id=request.corpus_version_id or "", scope=scope)
+                return await service.inspect_version(
+                    version_id=request.corpus_version_id or "", scope=scope
+                )
             if request.operation == "qa_search":
                 result = await RetrievalService(conn).retrieve_named_version(
-                    request.question or "", RetrievalScope(**scope, chapter_id=request.chapter_id), request.corpus_version_id or ""
+                    request.question or "",
+                    RetrievalScope(**scope, chapter_id=request.chapter_id),
+                    request.corpus_version_id or "",
                 )
-                return {"strength": result.strength, "reason": result.reason, "results": [
-                    {"citation": {"citation_id": item.citation.citation_id, "content": item.citation.content,
-                                  "chapter_id": item.citation.chapter_id, "topic_no": item.citation.topic_no,
-                                  "topic_title": item.citation.topic_title, "page_start": item.citation.page_start,
-                                  "page_end": item.citation.page_end, "visuals": []},
-                     "fused_rank": item.fused_rank,
-                     "contributions": [{"channel": contribution.channel, "rank": contribution.rank} for contribution in item.contributions]}
-                    for item in result.results
-                ]}
+                return {
+                    "strength": result.strength,
+                    "reason": result.reason,
+                    "results": [
+                        {
+                            "citation": {
+                                "citation_id": item.citation.citation_id,
+                                "content": item.citation.content,
+                                "chapter_id": item.citation.chapter_id,
+                                "topic_no": item.citation.topic_no,
+                                "topic_title": item.citation.topic_title,
+                                "page_start": item.citation.page_start,
+                                "page_end": item.citation.page_end,
+                                "visuals": [],
+                            },
+                            "fused_rank": item.fused_rank,
+                            "contributions": [
+                                {
+                                    "channel": contribution.channel,
+                                    "rank": contribution.rank,
+                                }
+                                for contribution in item.contributions
+                            ],
+                        }
+                        for item in result.results
+                    ],
+                }
             if request.operation == "create_draft":
-                return await service.create_draft(active_version_id=request.corpus_version_id or "", scope=scope, actor_id=auth_context.uid, request_id=auth_context.request_id)
+                return await service.create_draft(
+                    active_version_id=request.corpus_version_id or "",
+                    scope=scope,
+                    actor_id=auth_context.uid,
+                    request_id=auth_context.request_id,
+                )
             if request.operation == "approve_qa":
-                await service.approve_qa(version_id=request.corpus_version_id or "", scope=scope, actor_id=auth_context.uid, request_id=auth_context.request_id)
+                await service.approve_qa(
+                    version_id=request.corpus_version_id or "",
+                    scope=scope,
+                    actor_id=auth_context.uid,
+                    request_id=auth_context.request_id,
+                )
                 return {"status": "approved"}
             if request.operation in {"activate", "rollback"}:
-                await service.activate(version_id=request.corpus_version_id or "", scope=scope, actor_id=auth_context.uid, request_id=auth_context.request_id, rollback=request.operation == "rollback")
+                await service.activate(
+                    version_id=request.corpus_version_id or "",
+                    scope=scope,
+                    actor_id=auth_context.uid,
+                    request_id=auth_context.request_id,
+                    rollback=request.operation == "rollback",
+                )
                 return {"status": "active"}
-            if request.operation in {"add_question", "edit_question", "delete_question"}:
-                return await service.edit_question(version_id=request.corpus_version_id or "", scope=scope, actor_id=auth_context.uid, request_id=auth_context.request_id, question_id=request.question_id, question_text=request.question_text, chunk_id=request.chunk_id, delete=request.operation == "delete_question")
+            if request.operation in {
+                "add_question",
+                "edit_question",
+                "delete_question",
+            }:
+                return await service.edit_question(
+                    version_id=request.corpus_version_id or "",
+                    scope=scope,
+                    actor_id=auth_context.uid,
+                    request_id=auth_context.request_id,
+                    question_id=request.question_id,
+                    question_text=request.question_text,
+                    chunk_id=request.chunk_id,
+                    delete=request.operation == "delete_question",
+                )
             if request.operation == "edit_visual":
-                return await service.edit_visual(version_id=request.corpus_version_id or "", scope=scope, actor_id=auth_context.uid, request_id=auth_context.request_id, visual_id=request.visual_id or "", title=request.title, description=request.description, review_status=request.review_status, display_policy=request.display_policy)
+                return await service.edit_visual(
+                    version_id=request.corpus_version_id or "",
+                    scope=scope,
+                    actor_id=auth_context.uid,
+                    request_id=auth_context.request_id,
+                    visual_id=request.visual_id or "",
+                    title=request.title,
+                    description=request.description,
+                    review_status=request.review_status,
+                    display_policy=request.display_policy,
+                )
     except (LocalAdminError, RetrievalScopeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail={"code": str(exc), "message": "Local admin operation rejected"})
-    raise HTTPException(status_code=400, detail={"code": "ADMIN_OPERATION_INVALID", "message": "Unsupported local admin operation"})
+        raise HTTPException(
+            status_code=409,
+            detail={"code": str(exc), "message": "Local admin operation rejected"},
+        )
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "ADMIN_OPERATION_INVALID",
+            "message": "Unsupported local admin operation",
+        },
+    )

@@ -63,9 +63,13 @@ class RetrievalService:
         )
         if active_version is None:
             return classify_evidence(())
-        return await self._retrieve_version(question, scope, active_version, allow_named_draft=False)
+        return await self._retrieve_version(
+            question, scope, active_version, allow_named_draft=False
+        )
 
-    async def retrieve_named_version(self, question: str, scope: RetrievalScope, corpus_version_id: str) -> EvidenceResult:
+    async def retrieve_named_version(
+        self, question: str, scope: RetrievalScope, corpus_version_id: str
+    ) -> EvidenceResult:
         """Local QA only: named building/qa-ready snapshot; never changes active resolution."""
         version = await self._repo.get_corpus_version(corpus_version_id)
         if not version or version["status"] not in {"building", "qa_ready"}:
@@ -73,22 +77,47 @@ class RetrievalService:
         scoped = await self._repo.conn.fetchval(
             """SELECT EXISTS(SELECT 1 FROM rag_corpus_versions cv JOIN rag_corpora c ON c.id=cv.corpus_id
                WHERE cv.id=$1::uuid AND c.board_id=$2 AND c.class_id=$3 AND c.subject_id=$4)""",
-            corpus_version_id, scope.board_id, scope.class_id, scope.subject_id,
+            corpus_version_id,
+            scope.board_id,
+            scope.class_id,
+            scope.subject_id,
         )
         if not scoped:
             raise RetrievalScopeError("QA_CORPUS_VERSION_OUTSIDE_SCOPE")
-        return await self._retrieve_version(question, scope, version, allow_named_draft=True)
+        return await self._retrieve_version(
+            question, scope, version, allow_named_draft=True
+        )
 
-    async def _retrieve_version(self, question: str, scope: RetrievalScope, active_version: dict[str, Any], *, allow_named_draft: bool) -> EvidenceResult:
+    async def _retrieve_version(
+        self,
+        question: str,
+        scope: RetrievalScope,
+        active_version: dict[str, Any],
+        *,
+        allow_named_draft: bool,
+    ) -> EvidenceResult:
         normalized_question = " ".join(question.split())
         if not normalized_question:
             raise ValueError("RETRIEVAL_QUESTION_BLANK")
         corpus_version_id = str(active_version["id"])
-        chapter_exists = await self._repo.active_chapter_exists(
-            scope.board_id, scope.class_id, scope.subject_id, corpus_version_id, scope.chapter_id
-        ) if scope.chapter_id is not None and not allow_named_draft else (
-            await self._repo.conn.fetchval("SELECT EXISTS(SELECT 1 FROM rag_chunks WHERE corpus_version_id=$1::uuid AND chapter_id=$2)", corpus_version_id, scope.chapter_id)
-            if scope.chapter_id is not None else True
+        chapter_exists = (
+            await self._repo.active_chapter_exists(
+                scope.board_id,
+                scope.class_id,
+                scope.subject_id,
+                corpus_version_id,
+                scope.chapter_id,
+            )
+            if scope.chapter_id is not None and not allow_named_draft
+            else (
+                await self._repo.conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM rag_chunks WHERE corpus_version_id=$1::uuid AND chapter_id=$2)",
+                    corpus_version_id,
+                    scope.chapter_id,
+                )
+                if scope.chapter_id is not None
+                else True
+            )
         )
         if not chapter_exists:
             raise RetrievalScopeError("CHAPTER_NOT_IN_ACTIVE_CORPUS")
@@ -109,16 +138,34 @@ class RetrievalService:
         # concurrent commands. Keep the channel SQL serial here; callers that need
         # connection-level concurrency can create separate service instances.
         dense_rows = await self._repo.search_active_chunks_cosine(
-            scope.board_id, scope.class_id, scope.subject_id, corpus_version_id,
-            query_vector, scope.chapter_id, self._dense_top_k, allow_named_draft,
+            scope.board_id,
+            scope.class_id,
+            scope.subject_id,
+            corpus_version_id,
+            query_vector,
+            scope.chapter_id,
+            self._dense_top_k,
+            allow_named_draft,
         )
         expected_rows = await self._repo.search_active_expected_questions_cosine(
-            scope.board_id, scope.class_id, scope.subject_id, corpus_version_id,
-            query_vector, scope.chapter_id, self._expected_question_top_k, allow_named_draft,
+            scope.board_id,
+            scope.class_id,
+            scope.subject_id,
+            corpus_version_id,
+            query_vector,
+            scope.chapter_id,
+            self._expected_question_top_k,
+            allow_named_draft,
         )
         lexical_rows = await self._repo.search_active_chunks_lexical(
-            scope.board_id, scope.class_id, scope.subject_id, corpus_version_id,
-            normalized_question, scope.chapter_id, self._lexical_top_k, allow_named_draft,
+            scope.board_id,
+            scope.class_id,
+            scope.subject_id,
+            corpus_version_id,
+            normalized_question,
+            scope.chapter_id,
+            self._lexical_top_k,
+            allow_named_draft,
         )
         hits = [
             *self._channel_hits(dense_rows, RetrievalChannel.DENSE),
@@ -128,7 +175,9 @@ class RetrievalService:
         return classify_evidence(fuse_ranked_hits(hits))
 
     @staticmethod
-    def _configuration_from_active_version(version: dict[str, Any]) -> BGEEmbeddingConfiguration:
+    def _configuration_from_active_version(
+        version: dict[str, Any],
+    ) -> BGEEmbeddingConfiguration:
         try:
             configuration = BGEEmbeddingConfiguration(
                 model=version["embedding_model"],
@@ -138,13 +187,17 @@ class RetrievalService:
                 query_instruction=version["query_instruction"],
             )
         except (KeyError, TypeError) as exc:
-            raise RetrievalConfigurationError("ACTIVE_CORPUS_CONFIGURATION_INVALID") from exc
+            raise RetrievalConfigurationError(
+                "ACTIVE_CORPUS_CONFIGURATION_INVALID"
+            ) from exc
         if version.get("embedding_config_fingerprint") != configuration.fingerprint():
             raise RetrievalConfigurationError("ACTIVE_CORPUS_CONFIGURATION_MISMATCH")
         return configuration
 
     @staticmethod
-    def _channel_hits(rows: list[dict[str, Any]], channel: RetrievalChannel) -> list[RankedChannelHit]:
+    def _channel_hits(
+        rows: list[dict[str, Any]], channel: RetrievalChannel
+    ) -> list[RankedChannelHit]:
         hits = []
         for position, row in enumerate(rows, start=1):
             rank = int(row.get("expected_question_rank", position))

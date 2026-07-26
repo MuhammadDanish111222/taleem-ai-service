@@ -26,7 +26,9 @@ class RetrievalScope:
     chapter_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not all(value.strip() for value in (self.board_id, self.class_id, self.subject_id)):
+        if not all(
+            value.strip() for value in (self.board_id, self.class_id, self.subject_id)
+        ):
             raise ValueError("RETRIEVAL_SCOPE_FIELDS_REQUIRED")
         if self.chapter_id is not None and not self.chapter_id.strip():
             raise ValueError("RETRIEVAL_CHAPTER_ID_BLANK")

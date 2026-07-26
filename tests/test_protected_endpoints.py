@@ -63,7 +63,12 @@ def test_unsigned_direct_local_admin_request_rejected():
     """The Phase 3F control plane never accepts an unsigned direct request."""
     response = client.post(
         "/api/v1/internal/admin/rag",
-        json={"operation": "overview", "board_id": "b", "class_id": "c", "subject_id": "s"},
+        json={
+            "operation": "overview",
+            "board_id": "b",
+            "class_id": "c",
+            "subject_id": "s",
+        },
     )
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
@@ -91,7 +96,12 @@ def test_signed_non_admin_local_admin_request_rejected(mock_keys, mock_redis):
     response = client.post(
         "/api/v1/internal/admin/rag",
         headers={"Authorization": f"Bearer {token}"},
-        json={"operation": "overview", "board_id": "b", "class_id": "c", "subject_id": "s"},
+        json={
+            "operation": "overview",
+            "board_id": "b",
+            "class_id": "c",
+            "subject_id": "s",
+        },
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "FORBIDDEN_NOT_ADMIN"

@@ -388,9 +388,9 @@ class RagRepository:
         )
         payload = [dict(row) for row in rows]
         fingerprint = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(
+                payload, sort_keys=True, default=str, separators=(",", ":")
+            ).encode("utf-8")
         ).hexdigest()
         await self.conn.execute(
             """
@@ -487,7 +487,9 @@ class RagRepository:
         )
         return [dict(row) for row in rows]
 
-    async def get_corpus_version(self, corpus_version_id: str) -> Optional[Dict[str, Any]]:
+    async def get_corpus_version(
+        self, corpus_version_id: str
+    ) -> Optional[Dict[str, Any]]:
         row = await self.conn.fetchrow(
             "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid;", corpus_version_id
         )
@@ -517,8 +519,13 @@ class RagRepository:
               AND cv.embedding_revision = $6 AND cv.embedding_dim = 768
               AND cv.embedding_config_fingerprint = $7;
             """,
-            chunk_id, corpus_version_id, str(vector), input_hash, embedding_model,
-            embedding_revision, configuration_fingerprint,
+            chunk_id,
+            corpus_version_id,
+            str(vector),
+            input_hash,
+            embedding_model,
+            embedding_revision,
+            configuration_fingerprint,
         )
         return result.endswith("1")
 
@@ -547,8 +554,13 @@ class RagRepository:
               AND cv.embedding_model = $5 AND cv.embedding_revision = $6
               AND cv.embedding_dim = 768 AND cv.embedding_config_fingerprint = $7;
             """,
-            question_id, corpus_version_id, str(vector), input_hash, embedding_model,
-            embedding_revision, configuration_fingerprint,
+            question_id,
+            corpus_version_id,
+            str(vector),
+            input_hash,
+            embedding_model,
+            embedding_revision,
+            configuration_fingerprint,
         )
         return result.endswith("1")
 
@@ -597,8 +609,11 @@ class RagRepository:
                            OR q.embedding_status <> 'embedded' OR q.embedding_model <> $3
                            OR q.embedding_revision <> $4 OR q.embedding_config_fingerprint <> $5)) AS invalid_questions;
             """,
-            corpus_version_id, cv["embedding_dim"], cv["embedding_model"],
-            cv["embedding_revision"], cv["embedding_config_fingerprint"],
+            corpus_version_id,
+            cv["embedding_dim"],
+            cv["embedding_model"],
+            cv["embedding_revision"],
+            cv["embedding_config_fingerprint"],
         )
         blocking_jobs = await self.conn.fetchval(
             """
@@ -609,7 +624,8 @@ class RagRepository:
               AND payload->>'embedding_input_fingerprint' = $3
               AND status IN ('queued', 'leased', 'running', 'retry_wait', 'failed');
             """,
-            corpus_version_id, cv["embedding_config_fingerprint"],
+            corpus_version_id,
+            cv["embedding_config_fingerprint"],
             cv["embedding_input_fingerprint"],
         )
         reasons = []
@@ -623,7 +639,10 @@ class RagRepository:
             reasons.append("CHUNK_EMBEDDINGS_INCOMPLETE")
         if cv["expected_question_count"] != actual["questions"]:
             reasons.append("QUESTION_COUNT_MISMATCH")
-        if cv["embedded_question_count"] != actual["questions"] or actual["invalid_questions"]:
+        if (
+            cv["embedded_question_count"] != actual["questions"]
+            or actual["invalid_questions"]
+        ):
             reasons.append("QUESTION_EMBEDDINGS_INCOMPLETE")
         if blocking_jobs:
             reasons.append("EMBEDDING_JOBS_NOT_SETTLED")
@@ -799,7 +818,8 @@ class RagRepository:
             corpus_version_id,
             str(query_embedding),
             chapter_id,
-            top_k, allow_named_draft,
+            top_k,
+            allow_named_draft,
         )
         return [dict(row) for row in rows]
 
@@ -862,7 +882,8 @@ class RagRepository:
             corpus_version_id,
             str(query_embedding),
             chapter_id,
-            top_k, allow_named_draft,
+            top_k,
+            allow_named_draft,
         )
         return [dict(row) for row in rows]
 
@@ -903,6 +924,7 @@ class RagRepository:
             corpus_version_id,
             query_text,
             chapter_id,
-            top_k, allow_named_draft,
+            top_k,
+            allow_named_draft,
         )
         return [dict(row) for row in rows]

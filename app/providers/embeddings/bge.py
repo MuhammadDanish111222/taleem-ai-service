@@ -65,7 +65,11 @@ def format_chunk_embedding_input(
         approved_visuals,
         key=lambda item: _clean_text(item.get("visual_id")),
     )
-    if approved_visual and approved_visual.get("is_linked") and approved_visual.get("is_approved"):
+    if (
+        approved_visual
+        and approved_visual.get("is_linked")
+        and approved_visual.get("is_approved")
+    ):
         visuals.append(approved_visual)
     for approved_visual in visuals:
         if visual_title := _clean_text(approved_visual.get("title")):
@@ -90,7 +94,9 @@ class BGEEmbeddingProvider:
             or self.configuration.dimensions != EMBEDDING_DIMENSIONS
             or not self.configuration.normalize
         ):
-            raise ValueError("Phase 3D permits only the pinned BAAI/bge-base-en-v1.5 configuration.")
+            raise ValueError(
+                "Phase 3D permits only the pinned BAAI/bge-base-en-v1.5 configuration."
+            )
         self._tokenizer = None
         self._model = None
 
@@ -122,7 +128,9 @@ class BGEEmbeddingProvider:
             return []
         self._load()
         assert self._tokenizer is not None and self._model is not None
-        batch = self._tokenizer(list(texts), padding=True, truncation=True, return_tensors="pt")
+        batch = self._tokenizer(
+            list(texts), padding=True, truncation=True, return_tensors="pt"
+        )
         with self._torch.no_grad():
             model_output = self._model(**batch)
             vectors = model_output.last_hidden_state[:, 0]
@@ -133,11 +141,16 @@ class BGEEmbeddingProvider:
 
     def _validate_vectors(self, vectors: Sequence[Sequence[float]]) -> None:
         if any(len(vector) != self.configuration.dimensions for vector in vectors):
-            raise ValueError("Embedding provider returned a vector with an invalid dimension.")
+            raise ValueError(
+                "Embedding provider returned a vector with an invalid dimension."
+            )
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         return self._embed(texts)
 
     def embed_queries(self, texts: Sequence[str]) -> list[list[float]]:
-        formatted = [f"{self.configuration.query_instruction}{_clean_text(text)}" for text in texts]
+        formatted = [
+            f"{self.configuration.query_instruction}{_clean_text(text)}"
+            for text in texts
+        ]
         return self._embed(formatted)

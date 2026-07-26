@@ -65,9 +65,9 @@ class Worker:
         if self.worker_mode is not None:
             mode = resolve_worker_mode(self.worker_mode)
             owned_types = owned_job_types(mode)
-            if self.supported_types is not None and not set(self.supported_types).issubset(
-                owned_types
-            ):
+            if self.supported_types is not None and not set(
+                self.supported_types
+            ).issubset(owned_types):
                 raise ValueError(
                     f"Worker mode '{mode}' cannot claim job types outside its ownership."
                 )

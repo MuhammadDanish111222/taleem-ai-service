@@ -34,8 +34,9 @@ def test_bge_uses_cls_pooling_and_l2_normalizes_768_dimensions():
         no_grad=nullcontext,
         nn=SimpleNamespace(
             functional=SimpleNamespace(
-                normalize=lambda value, p, dim: normalize_calls.append((value, p, dim))
-                or value
+                normalize=lambda value, p, dim: (
+                    normalize_calls.append((value, p, dim)) or value
+                )
             )
         ),
     )

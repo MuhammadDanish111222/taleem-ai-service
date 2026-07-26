@@ -86,7 +86,8 @@ async def test_single_active_corpus_version_constraint(conn):
         corpus_id,
     )
     await conn.execute(
-        "UPDATE rag_corpus_versions SET status = 'active' WHERE corpus_id = $1;", corpus_id
+        "UPDATE rag_corpus_versions SET status = 'active' WHERE corpus_id = $1;",
+        corpus_id,
     )
 
     # 3. Attempting to insert a second active version for same corpus must fail with UniqueViolationError
@@ -99,7 +100,8 @@ async def test_single_active_corpus_version_constraint(conn):
             corpus_id,
         )
         await conn.execute(
-            "UPDATE rag_corpus_versions SET status = 'active' WHERE corpus_id = $1 AND version_no = 2;", corpus_id
+            "UPDATE rag_corpus_versions SET status = 'active' WHERE corpus_id = $1 AND version_no = 2;",
+            corpus_id,
         )
 
 

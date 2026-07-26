@@ -36,6 +36,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/taleem_dev
       REDIS_URL: redis://localhost:6379/0
+      WORKER_MODE: local_admin
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -122,6 +123,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/taleem_dev
       REDIS_URL: redis://localhost:6379/0
+      WORKER_MODE: local_admin
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3

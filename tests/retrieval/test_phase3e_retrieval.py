@@ -43,7 +43,10 @@ class FakeQueryEmbeddingProvider:
 async def conn():
     try:
         connection = await asyncpg.connect(
-            os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
+            os.getenv(
+                "DATABASE_URL",
+                "postgresql://postgres:postgres@localhost:5432/taleem_dev",
+            )
         )
     except (ConnectionRefusedError, OSError):
         pytest.skip("Supported disposable PostgreSQL database is unavailable.")
@@ -63,7 +66,13 @@ def _vector(index: int = 0) -> list[float]:
 
 
 async def _activate_corpus(
-    conn, *, board: str, class_id: str = "class-9", subject: str = "physics", suffix: str, chunks
+    conn,
+    *,
+    board: str,
+    class_id: str = "class-9",
+    subject: str = "physics",
+    suffix: str,
+    chunks,
 ):
     repo = RagRepository(conn)
     configuration = BGEEmbeddingConfiguration()
@@ -117,12 +126,14 @@ async def _activate_corpus(
             configuration.fingerprint(),
         )
     await repo.refresh_embedding_counts(str(version["id"]))
-    assert (await repo.mark_qa_ready(str(version["id"]))) ["ready"]
+    assert (await repo.mark_qa_ready(str(version["id"])))["ready"]
     assert await repo.activate_corpus_version(str(version["id"]), "test-admin")
     return str(version["id"])
 
 
-def _chunk(index: int, chapter: str, text: str, questions: list[str], vector_index: int = 0):
+def _chunk(
+    index: int, chapter: str, text: str, questions: list[str], vector_index: int = 0
+):
     return {
         "chunk_order": index,
         "chunk_text": text,
@@ -142,22 +153,46 @@ async def test_three_channels_are_scoped_to_active_version_and_optional_chapter(
         conn,
         board="board-a",
         suffix="superseded",
-        chunks=[_chunk(0, "chapter-one", "shared orbit evidence superseded", ["shared orbit old"])],
+        chunks=[
+            _chunk(
+                0,
+                "chapter-one",
+                "shared orbit evidence superseded",
+                ["shared orbit old"],
+            )
+        ],
     )
     await _activate_corpus(
         conn,
         board="board-a",
         suffix="active",
         chunks=[
-            _chunk(0, "chapter-one", "shared orbit evidence active chapter one", ["shared orbit one", "shared orbit again"]),
-            _chunk(1, "chapter-two", "shared orbit evidence active chapter two", ["shared orbit two"]),
+            _chunk(
+                0,
+                "chapter-one",
+                "shared orbit evidence active chapter one",
+                ["shared orbit one", "shared orbit again"],
+            ),
+            _chunk(
+                1,
+                "chapter-two",
+                "shared orbit evidence active chapter two",
+                ["shared orbit two"],
+            ),
         ],
     )
     await _activate_corpus(
         conn,
         board="board-b",
         suffix="other-board",
-        chunks=[_chunk(0, "chapter-one", "shared orbit evidence hidden board", ["shared orbit hidden"])],
+        chunks=[
+            _chunk(
+                0,
+                "chapter-one",
+                "shared orbit evidence hidden board",
+                ["shared orbit hidden"],
+            )
+        ],
     )
     service = RetrievalService(
         conn,
@@ -169,16 +204,25 @@ async def test_three_channels_are_scoped_to_active_version_and_optional_chapter(
     result = await service.retrieve(
         "shared orbit", RetrievalScope("board-a", "class-9", "physics")
     )
-    assert {item.citation.chapter_id for item in result.results} == {"chapter-one", "chapter-two"}
+    assert {item.citation.chapter_id for item in result.results} == {
+        "chapter-one",
+        "chapter-two",
+    }
     assert all("hidden" not in item.citation.content for item in result.results)
     assert all("superseded" not in item.citation.content for item in result.results)
-    assert (await RagRepository(conn).get_active_corpus_version("board-a", "class-9", "physics"))["status"] == "active"
+    assert (
+        await RagRepository(conn).get_active_corpus_version(
+            "board-a", "class-9", "physics"
+        )
+    )["status"] == "active"
 
     chapter_result = await service.retrieve(
         "shared orbit", RetrievalScope("board-a", "class-9", "physics", "chapter-two")
     )
     assert chapter_result.results
-    assert {item.citation.chapter_id for item in chapter_result.results} == {"chapter-two"}
+    assert {item.citation.chapter_id for item in chapter_result.results} == {
+        "chapter-two"
+    }
 
 
 @pytest.mark.asyncio
@@ -203,12 +247,20 @@ async def test_expected_question_hits_resolve_once_to_parent_chunk_with_best_ran
         "no lexical match", RetrievalScope("board-expected", "class-9", "physics")
     )
     expected_only = [
-        item for item in result.results
-        if any(part.channel is RetrievalChannel.EXPECTED_QUESTION for part in item.contributions)
+        item
+        for item in result.results
+        if any(
+            part.channel is RetrievalChannel.EXPECTED_QUESTION
+            for part in item.contributions
+        )
     ]
     assert len(expected_only) == 2
     expected_ranks = [
-        next(part.rank for part in item.contributions if part.channel is RetrievalChannel.EXPECTED_QUESTION)
+        next(
+            part.rank
+            for part in item.contributions
+            if part.channel is RetrievalChannel.EXPECTED_QUESTION
+        )
         for item in expected_only
     ]
     assert sorted(expected_ranks) == [1, 2]
@@ -216,10 +268,13 @@ async def test_expected_question_hits_resolve_once_to_parent_chunk_with_best_ran
         sum(
             contribution.channel is RetrievalChannel.EXPECTED_QUESTION
             for contribution in item.contributions
-        ) == 1
+        )
+        == 1
         for item in expected_only
     )
-    assert all(not hasattr(item.citation, "expected_question_id") for item in expected_only)
+    assert all(
+        not hasattr(item.citation, "expected_question_id") for item in expected_only
+    )
     assert all("question_text" not in item.citation.__dict__ for item in expected_only)
 
 
@@ -228,7 +283,9 @@ async def test_empty_evidence_and_mismatched_active_configuration_fail_safely(co
     service = RetrievalService(
         conn, lambda config: FakeQueryEmbeddingProvider(config, _vector())
     )
-    empty = await service.retrieve("nothing", RetrievalScope("missing", "class-9", "physics"))
+    empty = await service.retrieve(
+        "nothing", RetrievalScope("missing", "class-9", "physics")
+    )
     assert empty.strength is EvidenceStrength.NONE
     assert empty.results == ()
 
@@ -242,8 +299,12 @@ async def test_empty_evidence_and_mismatched_active_configuration_fail_safely(co
         "UPDATE rag_corpus_versions SET embedding_config_fingerprint = 'mismatch' WHERE id = $1::uuid;",
         version_id,
     )
-    with pytest.raises(RetrievalConfigurationError, match="ACTIVE_CORPUS_CONFIGURATION_MISMATCH"):
-        await service.retrieve("active", RetrievalScope("board-bad-config", "class-9", "physics"))
+    with pytest.raises(
+        RetrievalConfigurationError, match="ACTIVE_CORPUS_CONFIGURATION_MISMATCH"
+    ):
+        await service.retrieve(
+            "active", RetrievalScope("board-bad-config", "class-9", "physics")
+        )
 
 
 def test_rrf_is_deterministic_and_never_exposes_confidence():

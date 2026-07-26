@@ -48,10 +48,14 @@ async def embed_questions(
         raise ValueError("EMBEDDING_CONFIGURATION_MISMATCH_REQUIRES_NEW_CORPUS_VERSION")
 
     candidates = []
-    for row in await repo.fetch_questions_for_embedding(corpus_version_id, configuration_fingerprint):
+    for row in await repo.fetch_questions_for_embedding(
+        corpus_version_id, configuration_fingerprint
+    ):
         if row["language"] != "en":
             await repo.mark_embedding_failed(
-                "chunk_expected_questions", str(row["id"]), "ENGLISH_ONLY_EMBEDDING_UNSUPPORTED"
+                "chunk_expected_questions",
+                str(row["id"]),
+                "ENGLISH_ONLY_EMBEDDING_UNSUPPORTED",
             )
             raise ValueError("ENGLISH_ONLY_EMBEDDING_UNSUPPORTED")
         text = row["question_text"].strip()
@@ -62,26 +66,38 @@ async def embed_questions(
     for start in range(0, len(candidates), batch_size):
         batch = candidates[start : start + batch_size]
         try:
-            vectors = await asyncio.to_thread(provider.embed_documents, [item[1] for item in batch])
+            vectors = await asyncio.to_thread(
+                provider.embed_documents, [item[1] for item in batch]
+            )
             if len(vectors) != len(batch):
-                raise ValueError("Embedding provider returned an unexpected question vector count.")
+                raise ValueError(
+                    "Embedding provider returned an unexpected question vector count."
+                )
             for (row, _, input_hash), vector in zip(batch, vectors, strict=True):
                 await repo.write_question_embedding(
-                    str(row["id"]), corpus_version_id, vector, input_hash,
-                    provider.configuration.model, provider.configuration.revision,
+                    str(row["id"]),
+                    corpus_version_id,
+                    vector,
+                    input_hash,
+                    provider.configuration.model,
+                    provider.configuration.revision,
                     provider.configuration_fingerprint,
                 )
         except Exception:
             for row, _, _ in batch:
                 await repo.mark_embedding_failed(
-                    "chunk_expected_questions", str(row["id"]), "QUESTION_EMBEDDING_FAILED"
+                    "chunk_expected_questions",
+                    str(row["id"]),
+                    "QUESTION_EMBEDDING_FAILED",
                 )
             raise
     counts = await repo.refresh_embedding_counts(corpus_version_id)
     return {"embedded": len(candidates), "expected": counts["expected_question_count"]}
 
 
-async def handle_embed_questions(job: Dict[str, Any], conn: asyncpg.Connection) -> Dict[str, Any]:
+async def handle_embed_questions(
+    job: Dict[str, Any], conn: asyncpg.Connection
+) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     corpus_version_id = str(payload.get("corpus_version_id") or "")
     configuration_fingerprint = str(payload.get("embedding_config_fingerprint") or "")
@@ -94,9 +110,7 @@ async def handle_embed_questions(job: Dict[str, Any], conn: asyncpg.Connection) 
     ):
         return {"status": "stale_generation"}
 
-    result = await embed_questions(
-        corpus_version_id, configuration_fingerprint, conn
-    )
+    result = await embed_questions(corpus_version_id, configuration_fingerprint, conn)
     current = await repo.get_corpus_version(corpus_version_id)
     if not current or current["embedding_input_fingerprint"] != input_fingerprint:
         return {"status": "stale_generation"}

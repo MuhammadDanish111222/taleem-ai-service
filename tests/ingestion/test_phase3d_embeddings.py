@@ -36,7 +36,9 @@ class FakeEmbeddingProvider:
         self.calls.append(list(texts))
         vectors = []
         for text in texts:
-            value = (int(hashlib.sha256(text.encode()).hexdigest()[:4], 16) % 1000) / 1000
+            value = (
+                int(hashlib.sha256(text.encode()).hexdigest()[:4], 16) % 1000
+            ) / 1000
             vectors.append([value] * 768)
         return vectors
 
@@ -45,7 +47,10 @@ class FakeEmbeddingProvider:
 async def conn():
     try:
         connection = await asyncpg.connect(
-            os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev")
+            os.getenv(
+                "DATABASE_URL",
+                "postgresql://postgres:postgres@localhost:5432/taleem_dev",
+            )
         )
     except (ConnectionRefusedError, OSError):
         pytest.skip("Supported disposable PostgreSQL database is unavailable.")
@@ -62,12 +67,22 @@ async def _building_corpus(conn, scope: str = "phase3d"):
     provider = FakeEmbeddingProvider()
     repo = RagRepository(conn)
     version = await repo.get_or_create_building_corpus_version(
-        f"board-{scope}", "class-9", "physics", provider.configuration.model,
-        provider.configuration.revision, 768, provider.configuration_fingerprint,
-        provider.configuration.normalize, provider.configuration.query_instruction,
+        f"board-{scope}",
+        "class-9",
+        "physics",
+        provider.configuration.model,
+        provider.configuration.revision,
+        768,
+        provider.configuration_fingerprint,
+        provider.configuration.normalize,
+        provider.configuration.query_instruction,
     )
     document = await repo.create_document_version(
-        str(version["id"]), f"resource-{scope}", "v1", "admin_jsonl_v1", "Phase 3D",
+        str(version["id"]),
+        f"resource-{scope}",
+        "v1",
+        "admin_jsonl_v1",
+        "Phase 3D",
     )
     chunks = [
         {
@@ -113,8 +128,16 @@ def test_chunk_embedding_visuals_are_ordered_by_logical_id_without_embedding_ids
         topic_title="Forces",
         chunk_text="A force changes motion.",
         approved_visuals=[
-            {"visual_id": "z-force", "title": "Zebra force", "description": "Second visual"},
-            {"visual_id": "a-force", "title": "Arrow force", "description": "First visual"},
+            {
+                "visual_id": "z-force",
+                "title": "Zebra force",
+                "description": "Second visual",
+            },
+            {
+                "visual_id": "a-force",
+                "title": "Arrow force",
+                "description": "First visual",
+            },
         ],
     )
     assert text.index("Arrow force") < text.index("Zebra force")
@@ -148,8 +171,12 @@ async def test_each_expected_question_receives_its_own_vector(conn):
 @pytest.mark.asyncio
 async def test_restart_skips_matching_chunk_vectors_without_duplicate_rows(conn):
     repo, provider, corpus_version_id = await _building_corpus(conn, "restart")
-    first = await embed_chunks(corpus_version_id, provider.configuration_fingerprint, conn, provider)
-    second = await embed_chunks(corpus_version_id, provider.configuration_fingerprint, conn, provider)
+    first = await embed_chunks(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    second = await embed_chunks(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
     assert first["embedded"] == 1
     assert second["embedded"] == 0
     assert len(provider.calls) == 1
@@ -159,15 +186,26 @@ async def test_restart_skips_matching_chunk_vectors_without_duplicate_rows(conn)
 @pytest.mark.asyncio
 async def test_changed_configuration_requires_a_new_building_version(conn):
     repo, provider, corpus_version_id = await _building_corpus(conn, "config")
-    await embed_chunks(corpus_version_id, provider.configuration_fingerprint, conn, provider)
-    await embed_questions(corpus_version_id, provider.configuration_fingerprint, conn, provider)
+    await embed_chunks(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    await embed_questions(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
     await repo.refresh_embedding_counts(corpus_version_id)
     assert (await repo.mark_qa_ready(corpus_version_id))["ready"] is True
 
     changed = BGEEmbeddingConfiguration(query_instruction="Changed instruction: ")
     next_version = await repo.get_or_create_building_corpus_version(
-        "board-config", "class-9", "physics", changed.model, changed.revision, 768,
-        changed.fingerprint(), changed.normalize, changed.query_instruction,
+        "board-config",
+        "class-9",
+        "physics",
+        changed.model,
+        changed.revision,
+        768,
+        changed.fingerprint(),
+        changed.normalize,
+        changed.query_instruction,
     )
     assert str(next_version["id"]) != corpus_version_id
     assert next_version["status"] == "building"
@@ -200,9 +238,12 @@ async def test_embedding_stage_dependencies_are_completed_and_enqueued_atomicall
     chunk = await jobs.create_job(
         "embed_chunks", payload, idempotency_key="phase3d-test-chunks"
     )
-    assert await conn.fetchval(
-        "SELECT COUNT(*) FROM job_queue WHERE job_type = 'embed_questions'"
-    ) == 0
+    assert (
+        await conn.fetchval(
+            "SELECT COUNT(*) FROM job_queue WHERE job_type = 'embed_questions'"
+        )
+        == 0
+    )
     leased_chunk = await jobs.lease_job("local", ["embed_chunks"])
     assert str(leased_chunk["id"]) == str(chunk["id"])
 
@@ -218,9 +259,12 @@ async def test_embedding_stage_dependencies_are_completed_and_enqueued_atomicall
     assert (await jobs.get_job(str(chunk["id"])))["status"] == "succeeded"
     question = await jobs.lease_job("local", ["embed_questions"])
     assert question is not None
-    assert await conn.fetchval(
-        "SELECT COUNT(*) FROM job_queue WHERE job_type = 'corpus_completeness'"
-    ) == 0
+    assert (
+        await conn.fetchval(
+            "SELECT COUNT(*) FROM job_queue WHERE job_type = 'corpus_completeness'"
+        )
+        == 0
+    )
 
     assert await jobs.complete_job_and_enqueue(
         str(question["id"]),
@@ -255,8 +299,12 @@ async def test_qa_ready_is_blocked_for_invalid_chunk_or_question_vectors(
     repo, provider, corpus_version_id = await _building_corpus(
         conn, f"blocked-{table}-{column}-{value}"
     )
-    await embed_chunks(corpus_version_id, provider.configuration_fingerprint, conn, provider)
-    await embed_questions(corpus_version_id, provider.configuration_fingerprint, conn, provider)
+    await embed_chunks(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    await embed_questions(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
     await repo.refresh_embedding_counts(corpus_version_id)
     await conn.execute(f"UPDATE {table} SET {column} = $1", value)
     report = await repo.mark_qa_ready(corpus_version_id)

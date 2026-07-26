@@ -49,7 +49,9 @@ def fuse_ranked_hits(
                 channel=channel,
                 rank=hit.rank,
             )
-            for channel, hit in sorted(by_channel.items(), key=lambda item: item[0].value)
+            for channel, hit in sorted(
+                by_channel.items(), key=lambda item: item[0].value
+            )
         )
         candidates.append(
             (
@@ -67,5 +69,7 @@ def fuse_ranked_hits(
             fused_rank=index,
             contributions=contributions,
         )
-        for index, (_, by_channel, contributions, weight) in enumerate(candidates, start=1)
+        for index, (_, by_channel, contributions, weight) in enumerate(
+            candidates, start=1
+        )
     )
