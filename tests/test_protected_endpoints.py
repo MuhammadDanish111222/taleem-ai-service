@@ -59,6 +59,44 @@ def test_malformed_token_rejected():
     assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
 
 
+def test_unsigned_direct_local_admin_request_rejected():
+    """The Phase 3F control plane never accepts an unsigned direct request."""
+    response = client.post(
+        "/api/v1/internal/admin/rag",
+        json={"operation": "overview", "board_id": "b", "class_id": "c", "subject_id": "s"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
+
+
+def test_signed_non_admin_local_admin_request_rejected(mock_keys, mock_redis):
+    """A valid internal JWT still needs its explicit admin authorization claim."""
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "uid": "non-admin",
+            "admin": False,
+            "feature": "admin_portal",
+            "request_id": "non-admin-request",
+            "aud": "taleem-ai-service",
+            "iss": "taleem-web",
+            "jti": "non-admin-jti",
+            "iat": now,
+            "exp": now + 60,
+        },
+        private_pem,
+        algorithm="RS256",
+        headers={"kid": "test-kid"},
+    )
+    response = client.post(
+        "/api/v1/internal/admin/rag",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"operation": "overview", "board_id": "b", "class_id": "c", "subject_id": "s"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "FORBIDDEN_NOT_ADMIN"
+
+
 def test_valid_internal_jwt_accepted(mock_keys, mock_redis):
     """Valid signed internal JWT reaches protected endpoint with identity preserved."""
     now = int(time.time())

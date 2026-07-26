@@ -15,6 +15,10 @@ from typing import Any, Callable, Dict, Optional
 import asyncpg
 
 from app.core.config import get_settings
+from app.core.worker_modes import owned_job_types, resolve_worker_mode
+from app.services.ingestion.completeness import handle_corpus_completeness
+from app.services.ingestion.embed_chunks import handle_embed_chunks
+from app.services.ingestion.embed_questions import handle_embed_questions
 from app.services.jobs.queue import JobQueueService
 from app.workers.handlers.jsonl_ingest import handle_jsonl_ingest
 
@@ -39,17 +43,15 @@ class Worker:
         self,
         worker_id: Optional[str] = None,
         supported_types: Optional[list] = None,
+        worker_mode: Optional[str] = None,
         poll_interval: float = 2.0,
         heartbeat_interval: float = 5.0,
         stale_check_interval: float = 15.0,
         stale_threshold_seconds: int = 60,
     ):
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
-        self.supported_types = supported_types or [
-            "test_job",
-            "ingestion_job",
-            "jsonl_ingest",
-        ]
+        self.supported_types = supported_types
+        self.worker_mode = worker_mode
         self.poll_interval = poll_interval
         self.heartbeat_interval = heartbeat_interval
         self.stale_check_interval = stale_check_interval
@@ -60,6 +62,22 @@ class Worker:
     async def run(self, db_url: Optional[str] = None):
         settings = get_settings()
         url = db_url or settings.DATABASE_URL
+        if self.worker_mode is not None:
+            mode = resolve_worker_mode(self.worker_mode)
+            owned_types = owned_job_types(mode)
+            if self.supported_types is not None and not set(self.supported_types).issubset(
+                owned_types
+            ):
+                raise ValueError(
+                    f"Worker mode '{mode}' cannot claim job types outside its ownership."
+                )
+            self.supported_types = sorted(owned_types)
+        elif self.supported_types is None:
+            # The process entry point must declare ownership through WORKER_MODE.
+            mode = resolve_worker_mode(settings.WORKER_MODE)
+            self.supported_types = sorted(owned_job_types(mode))
+        # Explicit supported_types is retained for isolated worker-runtime tests;
+        # production startup uses WORKER_MODE above and cannot bypass ownership.
 
         logger.info(
             f"Worker '{self.worker_id}' starting with supported job types: {self.supported_types}"
@@ -178,11 +196,26 @@ class Worker:
 
             # Execute actual handler logic
             async with pool.acquire() as conn:
-                await handler(job, conn)
+                handler_result = await handler(job, conn)
+
+            next_job = (
+                handler_result.get("_next_job")
+                if isinstance(handler_result, dict)
+                else None
+            )
 
             async with pool.acquire() as conn:
                 service = JobQueueService(conn)
-                await service.complete_job(job_id, self.worker_id, 100.0)
+                if next_job:
+                    completed = await service.complete_job_and_enqueue(
+                        job_id, self.worker_id, next_job, 100.0
+                    )
+                else:
+                    completed = await service.complete_job(
+                        job_id, self.worker_id, 100.0
+                    )
+                if not completed:
+                    raise RuntimeError("JOB_LEASE_OWNERSHIP_LOST")
             logger.info(f"Job '{job_id}' completed successfully.")
         except Exception as err:
             logger.error(f"Error processing job '{job_id}': {err}")
@@ -208,12 +241,15 @@ async def dummy_test_handler(job: Dict[str, Any], conn: asyncpg.Connection):
 
 register_handler("test_job", dummy_test_handler)
 register_handler("jsonl_ingest", handle_jsonl_ingest)
+register_handler("embed_chunks", handle_embed_chunks)
+register_handler("embed_questions", handle_embed_questions)
+register_handler("corpus_completeness", handle_corpus_completeness)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":
         print("WORKER_SMOKE_TEST_SUCCESS", flush=True)
         sys.exit(0)
-    worker = Worker()
+    worker = Worker(worker_mode=get_settings().WORKER_MODE)
     try:
         asyncio.run(worker.run())
     except (KeyboardInterrupt, SystemExit):

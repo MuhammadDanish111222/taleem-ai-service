@@ -26,6 +26,12 @@ VALID_LANGUAGES: Set[str] = {
     "mixed",
 }
 
+VALID_VISUAL_TYPES: Set[str] = {"diagram", "table", "equation", "figure"}
+MAX_VISUAL_ID_LENGTH = 240
+MAX_VISUAL_TITLE_LENGTH = 240
+MAX_VISUAL_DESCRIPTION_LENGTH = 4000
+MAX_STORAGE_KEY_LENGTH = 1024
+
 
 class JsonlValidationError(ValueError):
     """A sanitized, stable validation error safe to persist on a job."""
@@ -374,6 +380,31 @@ async def validate_and_parse_jsonl(
                     )
                 normalized_questions.add(normalized_question)
 
+        # Visual assets remain server-side Drive objects.  Validation deliberately
+        # reports field names/reasons only, never the submitted metadata or key.
+        visuals = row_data.get("visuals", [])
+        if not isinstance(visuals, list):
+            errors.append({"row": row_idx, "field": "visuals", "reason": "must_be_array", "code": "JSONL_VALIDATION_FAILED"})
+        else:
+            visual_ids: Set[str] = set()
+            for visual in visuals:
+                if not isinstance(visual, dict):
+                    errors.append({"row": row_idx, "field": "visuals", "reason": "visual_must_be_object", "code": "JSONL_VALIDATION_FAILED"})
+                    continue
+                visual_id = visual.get("visual_id")
+                if not isinstance(visual_id, str) or not visual_id.strip() or len(visual_id.strip()) > MAX_VISUAL_ID_LENGTH:
+                    errors.append({"row": row_idx, "field": "visuals.visual_id", "reason": "missing_blank_or_too_long", "code": "JSONL_VALIDATION_FAILED"})
+                elif visual_id.strip() in visual_ids:
+                    errors.append({"row": row_idx, "field": "visuals.visual_id", "reason": "duplicate_visual_id_in_chunk", "code": "JSONL_VALIDATION_FAILED"})
+                else:
+                    visual_ids.add(visual_id.strip())
+                if visual.get("visual_type") not in VALID_VISUAL_TYPES:
+                    errors.append({"row": row_idx, "field": "visuals.visual_type", "reason": "invalid_visual_type_enum", "code": "JSONL_VALIDATION_FAILED"})
+                for field, maximum in (("title", MAX_VISUAL_TITLE_LENGTH), ("description", MAX_VISUAL_DESCRIPTION_LENGTH), ("storage_key", MAX_STORAGE_KEY_LENGTH)):
+                    value = visual.get(field)
+                    if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum:
+                        errors.append({"row": row_idx, "field": f"visuals.{field}", "reason": "missing_blank_or_too_long", "code": "JSONL_VALIDATION_FAILED"})
+
         page_range = row_data.get("page_range")
         if page_range is not None:
             if (
@@ -496,6 +527,16 @@ async def validate_and_parse_jsonl(
             "chunk_text": text,
             "expected_questions": [
                 question.strip() for question in row["expected_questions"]
+            ],
+            "visuals": [
+                {
+                    "visual_id": visual["visual_id"].strip(),
+                    "visual_type": visual["visual_type"],
+                    "title": visual["title"].strip(),
+                    "description": visual["description"].strip(),
+                    "storage_key": visual["storage_key"].strip(),
+                }
+                for visual in row.get("visuals", [])
             ],
             "page_start": page_start,
             "page_end": page_end,

@@ -124,6 +124,42 @@ class JobRepository:
             result = await self.conn.execute(query, job_id, prog_val)
         return self._affected_rows(result) > 0
 
+    async def complete_job_and_enqueue(
+        self,
+        job_id: str,
+        worker_id: str,
+        next_job: Dict[str, Any],
+        final_progress: float = 100.0,
+    ) -> bool:
+        """Atomically completes a stage and makes its dependent stage leaseable.
+
+        This prevents a downstream embedding/readiness stage from running while
+        its predecessor is still running, and leaves no crash window between
+        successful completion and enqueueing the next stage.
+        """
+        async with self.conn.transaction():
+            result = await self.conn.execute(
+                """
+                UPDATE job_queue
+                SET status = 'succeeded', progress = $3, stage = 'completed',
+                    completed_at = NOW(), updated_at = NOW()
+                WHERE id = $1::uuid AND locked_by = $2
+                  AND status IN ('leased', 'running');
+                """,
+                job_id,
+                worker_id,
+                final_progress,
+            )
+            if self._affected_rows(result) != 1:
+                return False
+            await self.create_job(
+                str(next_job["job_type"]),
+                dict(next_job["payload"]),
+                str(next_job["idempotency_key"]),
+                int(next_job.get("max_attempts", 3)),
+            )
+        return True
+
     async def fail_job(
         self,
         job_id: str,

@@ -45,6 +45,17 @@ class JobQueueService:
     ) -> bool:
         return await self.repo.complete_job(job_id, worker_id, final_progress)
 
+    async def complete_job_and_enqueue(
+        self,
+        job_id: str,
+        worker_id: str,
+        next_job: Dict[str, Any],
+        final_progress: float = 100.0,
+    ) -> bool:
+        return await self.repo.complete_job_and_enqueue(
+            job_id, worker_id, next_job, final_progress
+        )
+
     async def fail_job(
         self,
         job_id: str,

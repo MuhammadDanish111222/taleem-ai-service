@@ -4,13 +4,15 @@
 
 Python 3.12 is the supported runtime (`.python-version`, `pyproject.toml`, and CI agree). Railway hosts the FastAPI API and durable worker. It receives only BFF-issued internal JWTs; browsers do not call this service directly.
 
-For JSONL token counts, configure `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION`, and `EMBEDDING_DIM` (the defaults are `BAAI/bge-base-en-v1.5`, `main`, and `768`). This loads the tokenizer only, not the embedding model.
+For JSONL token counts, configure `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION`, and `EMBEDDING_DIM` (the defaults are `BAAI/bge-base-en-v1.5`, pinned revision `a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, and `768`). This loads the tokenizer only, not the embedding model.
 
 FastAPI AI microservice for the Taleem AI platform (`taleem-ai-service`).
 
 ## System Overview
 - **RAG Engine & Worker Runtime**: PostgreSQL 17 + `pgvector`, Asyncpg connection pool, RLS deny-by-default grants, durable `job_queue` worker loop with background heartbeating, atomic lease locking (`FOR UPDATE SKIP LOCKED`), and deterministic crash/retry recovery.
 - **Admin JSONL Chunk Ingestion (Phase 3C v1-scoped)**: Line-by-line validation, 4-level Firestore ancestor chain verification (`boards` -> `classes` -> `subjects` -> `chapters`), SHA256 content hashing, word token counting, atomic `replace_chapter_chunks` with `GREATEST(0, expected_chunk_count + delta)` and `embedded_chunk_count` non-null count reconciliation.
+- **Embeddings and Retrieval (Phases 3D–3E)**: Pinned BGE CLS/L2-normalized `vector(768)` embeddings with per-row provenance and completeness gates; exact scoped dense, expected-question, and lexical retrieval fused with deterministic rank-only RRF.
+- **Local RAG Administration (Phase 3F)**: Local-admin-only corpus inspection, draft QA, targeted expected-question/visual editing, controlled Google Drive image previews, audited activation, and rollback. Railway-public owns no durable bulk embedding jobs.
 - **Cross-Repository Security**: Asymmetric RS256 Internal JWT authentication (`aud: "taleem-ai-service"`, `iss: "taleem-web"`, strict 60s TTL window, mandatory claim validation, Redis JTI replay prevention).
 
 ## Getting Started

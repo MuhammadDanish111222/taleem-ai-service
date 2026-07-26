@@ -46,6 +46,19 @@ This document provides the definitive architectural design, database schema spec
 7. **`approved_question_bank`**: Lightweight approved question/answer bank table.
 8. **`solved_papers`**: Solved past paper snapshots linking `year`, `session`, `questions` (JSONB) to corpus versions.
 
+### Phase 3D Embedding Completeness (`0004_phase3d_embeddings.sql`)
+
+- Corpus versions store an immutable embedding-configuration fingerprint plus expected and embedded counters for both chunks and expected questions.
+- Chunk and expected-question rows record the model, revision, input hash, status, and completion timestamps for their individual `vector(768)` values. Existing vectors without this provenance remain unverified and cannot satisfy readiness.
+- `phase3d_require_corpus_complete()` prevents `qa_ready` and `active` transitions unless every required vector matches the stored version configuration and dimension, counters agree with actual rows, and no current embedding job is pending or failed. The function retains the deny-by-default function-grant model.
+- `BAAI/bge-base-en-v1.5` is pinned to revision `a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`; BGE uses CLS pooling (`last_hidden_state[:, 0]`) followed by L2 normalization. The MVP embedding worker accepts English chunks/questions only.
+
+### Phase 3F Local Admin QA, Visuals, and Activation (`0005_phase3f_local_admin.sql`)
+
+- A chunk owns zero or more direct `rag_visuals` rows. Each row has a stable logical `visual_id`, type, nonblank title/description, `google_drive` provider, server-only storage key, display policy, review status, normalized text hash, and timestamps. The database relation remains `rag_chunks -> rag_visuals`; image bytes and Drive identifiers are never copied to Postgres or browser DTOs.
+- JSONL may supply an optional `visuals` array. New imports are `pending` and `never` by default. Only approved visual title/description participate in parent-chunk embedding input, ordered by logical `visual_id`; keys, provider IDs, paths, database IDs, and image bytes never participate.
+- `rag_corpus_qa_approvals` persists the local reviewer, timestamp, request ID, and a safe action summary. Source, question, visual metadata, and display-policy edits invalidate an approval. `source_corpus_version_id` records active-to-building editable drafts.
+
 ---
 
 ## 3. Security, Grants & RLS Model (`0003_security_grants.sql`)
@@ -79,6 +92,16 @@ This document provides the definitive architectural design, database schema spec
 - Standard English stemmers fail or corrupt Urdu transliterations.
 - We use PostgreSQL's `'simple'` text search configuration (`to_tsvector('simple', content)`), which tokenizes and lowercases text without applying language-specific stemming rules, ensuring accurate search matching for Urdu, English, and Roman Urdu.
 
+### Phase 3E Scoped Retrieval
+
+- Retrieval is internal service-layer code only. Every dense chunk, expected-question, lexical, and chapter-validation query joins `rag_corpora` and `rag_corpus_versions` and filters in SQL by board ID, class ID, subject ID, the exact active version ID returned for that scope, and optional chapter ID.
+- Both vector channels use exact pgvector cosine distance (`<=>`). Phase 3D L2-normalizes BGE vectors, so cosine distance is a consistent angular comparison for chunk and expected-question vectors. No HNSW index or score-to-probability conversion is used.
+- Expected questions are searched as individual vectors, deduplicated to their parent chunk using the best individual match, and only then assigned contiguous parent ranks (`1, 2, 3, ...`). An expected-question row is never exposed as a citation.
+- Lexical search uses the existing scoped `'simple'` PostgreSQL full-text index. Reciprocal Rank Fusion (RRF, `k=60`) consumes ranks only and returns safe citations plus channel/rank contributions. Raw cosine distances, lexical scores, and RRF weights stay internal and are never confidence values.
+- The active corpus version's stored BGE model, revision, dimensions, normalization flag, query instruction, and fingerprint are reconstructed and verified before a single on-demand query embedding is made. Inference runs in a worker thread, not on the FastAPI event loop, and is not a durable Railway job.
+- Phase 3F draft QA uses this same three-channel retrieval implementation against an explicitly named `building` or `qa_ready` version. It is scope-checked in SQL and never changes active-version resolution. Student visual rendering remains out of scope; retrieval DTOs continue to return no visual storage references.
+- Evidence strength is evaluated only on the top fused parent chunk: `none` when no scoped fused results exist; `strong` when that top parent has at least two distinct channels at ranks 1--3; otherwise `weak`. A single channel is always `weak`, and duplicate expected-question rows still contribute only one expected-question channel.
+
 ---
 
 ## 5. Concurrency & Row Locking Hierarchy Strategy
@@ -91,7 +114,8 @@ To prevent race conditions, duplicate version generation, and database deadlocks
 
 ### Governance Contract:
 - **Phase 3C (Chunk Ingestion)**: Locks `rag_corpora` to check/create the single `building` corpus version for a subject scope, then locks `rag_corpus_versions` to verify `status == 'building'` before replacing chapter chunks and expected questions.
-- **Phase 3F (Activation Engine)**: When activating or superseding corpus versions, Phase 3F **MUST** follow this exact lock order (locking `rag_corpora` before modifying `rag_corpus_versions`) to guarantee deadlock-free execution against concurrent chunk ingestion workers.
+- **Phase 3D (Embedding)**: The local-admin worker processes a corpus generation in the durable order `embed_chunks` → `embed_questions` → `corpus_completeness`. Completion of one stage and enqueueing of its successor occur in one database transaction, so readiness is never leaseable while an embedding population is still running. `WORKER_MODE` is explicit: `local_admin` owns bulk jobs and `railway_public` owns none in Phase 3D.
+- **Phase 3F (Activation Engine)**: Activation and rollback use one transaction: lock `rag_corpora` first, lock all its version rows second, recheck persisted vector provenance/counts/jobs, scope/status, current QA approval, and displayable visual storage, then supersede the previous active row and activate exactly one target. The active-version partial unique index remains the final database invariant. Active retrieval resolves from PostgreSQL per request, so the explicit cache-invalidation seam is currently a no-op rather than a claimed cache action.
 
 ---
 
@@ -99,17 +123,14 @@ To prevent race conditions, duplicate version generation, and database deadlocks
 
 The following open questions were identified during Phase 3C closeout review against the build guide. They are recorded here for whoever scopes Phases 3D, 3E, and 7A — no implementation action is required now.
 
-### Visual Pipeline (no assigned phase)
+### Visual Pipeline (future PDF-layout work)
 
-The `rag_visuals` table exists in the schema (`0002_rag_schema.sql`) but is an **incomplete stub** relative to the full spec. The current columns are `id`, `chunk_id`, `visual_type`, `storage_path`, `caption`, and `created_at`. The build guide's visual-provenance specification requires six additional columns that are not yet present: `page`, `bbox`, `reading_order`, `content_hash`, `review_status`, and `complex_structure`. Of these, `bbox`/`page` provide spatial provenance for PDF-layout extraction, and `complex_structure` is what Phase 4E's source-image-fallback logic depends on. The current JSONL ingestion path (`admin_jsonl_v1`) does not populate `rag_visuals` at all, and no later phase should assume the table is ready to insert into as-is — a new migration extending it with the missing columns will be needed when the automated PDF-layout pipeline is built. Later phases (3E retrieval, 3F activation/QA, 4A answer generation, 4E citations, 4F visual rendering) reference visual-element functionality that depends on both populated rows and the full column set. For content ingested via the admin JSONL path, visual retrieval should be treated as **deferred/optional** until that pipeline exists. Per the build guide's own MVP v1 decision: *"revisit automated extraction once manual chunking becomes the bottleneck on content-addition speed, or once visual/flowchart retrieval is needed."*
+Phase 3F supersedes the historical Phase 3C note below: manual JSONL now persists reviewed visual metadata as direct chunk children, while image bytes stay in Google Drive. Student visual rendering and automated PDF-layout extraction are still deferred. Page/bbox/reading-order provenance remains nullable for the later layout pipeline; local-only previews allow only PNG, JPEG, WebP, and GIF through the controlled server stream, never Drive URLs or keys. Existing PDF reading remains separate.
 
-### Expected-Question Embeddings (Phase 3D / 3E gap)
-
-The `chunk_expected_questions` table exists and Phase 3C populates one question-text row per question with `embedding = NULL`. Phase 3D must embed both (1) every `rag_chunks.content` value and (2) every individual `chunk_expected_questions.question_text` row; its completion tracking must cover both populations. Phase 3E must then explicitly decide how expected-question similarity is used alongside chunk-text retrieval.
 
 ### Token-count contract (Phase 3C)
 
-New JSONL chunks use the configured embedding tokenizer (`EMBEDDING_MODEL` and `EMBEDDING_MODEL_REVISION`, default `BAAI/bge-base-en-v1.5@main`) without loading the embedding model. The tokenizer method/version is stored in chunk metadata. Existing stored counts are not rewritten by this change; re-ingest a chapter when its historical counts need to be recalculated.
+New JSONL chunks use the configured embedding tokenizer (`BAAI/bge-base-en-v1.5@a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`) without loading the embedding model. The tokenizer method/version is stored in chunk metadata. Existing stored counts are not rewritten by this change; re-ingest a chapter when its historical counts need to be recalculated.
 
 ### Retrieval Settings Granularity (Phase 7A gap)
 

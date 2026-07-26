@@ -80,20 +80,26 @@ async def test_single_active_corpus_version_constraint(conn):
     # 2. Insert first active version
     await conn.execute(
         """
-        INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, status)
-        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'active');
+        INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, embedding_config_fingerprint, status)
+        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'test-fingerprint', 'qa_ready');
         """,
         corpus_id,
+    )
+    await conn.execute(
+        "UPDATE rag_corpus_versions SET status = 'active' WHERE corpus_id = $1;", corpus_id
     )
 
     # 3. Attempting to insert a second active version for same corpus must fail with UniqueViolationError
     with pytest.raises(asyncpg.UniqueViolationError):
         await conn.execute(
             """
-            INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, status)
-            VALUES ($1, 2, 'text-embedding-3-small', 'v1', 768, 'active');
+            INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, embedding_config_fingerprint, status)
+            VALUES ($1, 2, 'text-embedding-3-small', 'v1', 768, 'test-fingerprint', 'qa_ready');
             """,
             corpus_id,
+        )
+        await conn.execute(
+            "UPDATE rag_corpus_versions SET status = 'active' WHERE corpus_id = $1 AND version_no = 2;", corpus_id
         )
 
 
@@ -106,10 +112,13 @@ async def test_foreign_key_on_delete_cascade_and_set_null(conn):
     )
     cv = await conn.fetchrow(
         """
-        INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, status)
-        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'active') RETURNING id;
+        INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, embedding_config_fingerprint, status)
+        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'test-fingerprint', 'qa_ready') RETURNING id;
         """,
         corpus["id"],
+    )
+    await conn.execute(
+        "UPDATE rag_corpus_versions SET status = 'active' WHERE id = $1;", cv["id"]
     )
 
     # Create request with corpus_version_id

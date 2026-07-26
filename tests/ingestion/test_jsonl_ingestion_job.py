@@ -248,9 +248,18 @@ async def test_non_building_status_lock_rejection(conn):
     )
     cv_id = str(cv["id"])
 
-    # Simulate activation: mark status active
+    # Simulate a valid Phase 3D activation without bypassing the readiness guard.
     await conn.execute(
-        "UPDATE rag_corpus_versions SET status = 'active' WHERE id = $1::uuid;", cv_id
+        """
+        UPDATE rag_corpus_versions
+        SET embedding_config_fingerprint = 'test-fingerprint', status = 'qa_ready'
+        WHERE id = $1::uuid;
+        """,
+        cv_id,
+    )
+    await conn.execute(
+        "UPDATE rag_corpus_versions SET status = 'active' WHERE id = $1::uuid;",
+        cv_id,
     )
 
     chunks = [

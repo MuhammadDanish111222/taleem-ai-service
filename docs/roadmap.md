@@ -4,6 +4,7 @@
 - [x] Phase 3A: RAG Foundation & Database Schema (PostgreSQL 17, pgvector, Asyncpg, RLS, Durable Jobs)
 - [x] Phase 3B: Cross-Repository Internal Auth & Durable Worker Runtime (Internal RS256 JWT, Worker Loop, Lease Recovery)
 - [x] Phase 3C (v1-scoped): Admin JSONL Chunk Ingestion & Validation
-- [ ] Phase 3D: Embedding & Vector Search Service — embed every chunk's `chunk_text` and every individual `chunk_expected_questions` row; track both before marking complete.
-- [ ] Phase 3E: RAG Query Engine & Answer Generation
+- [x] Phase 3D: Embeddings and Corpus Completeness — embed every chunk and every individual `chunk_expected_questions` row; require complete, matching 768-dimensional vectors before `qa_ready`.
+- [x] Phase 3E: Scoped three-channel retrieval, contiguous expected-question parent ranking, deterministic rank fusion, and approved top-parent evidence strength. No answer generation is in scope.
+- [x] Phase 3F: Local-only admin QA, visual and expected-question draft editing, controlled Drive image preview, and transactional corpus activation/rollback.
 - [ ] Phase 8: Scalability & Performance Tuning

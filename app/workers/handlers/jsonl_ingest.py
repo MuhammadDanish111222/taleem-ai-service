@@ -8,6 +8,7 @@ import asyncpg
 
 from app.core.config import get_settings
 from app.core.firebase_admin import get_firebase_app
+from app.providers.embeddings.bge import BGEEmbeddingConfiguration
 from app.repositories.audit_repository import AuditRepository
 from app.repositories.rag_repository import RagRepository
 from app.services.ingestion.jsonl_chunks import (
@@ -16,6 +17,7 @@ from app.services.ingestion.jsonl_chunks import (
     validate_and_parse_jsonl,
 )
 from app.services.ingestion.token_count import get_token_counter
+from app.services.jobs.queue import JobQueueService
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,10 @@ async def handle_jsonl_ingest(
     async with conn.transaction():
         # Get or create building corpus version for this subject scope
         settings = get_settings()
+        configuration = BGEEmbeddingConfiguration(
+            model=settings.EMBEDDING_MODEL,
+            revision=settings.EMBEDDING_MODEL_REVISION,
+        )
         corpus_ver = await repo.get_or_create_building_corpus_version(
             board_id,
             class_id,
@@ -102,6 +108,9 @@ async def handle_jsonl_ingest(
             embedding_model=settings.EMBEDDING_MODEL,
             embedding_revision=settings.EMBEDDING_MODEL_REVISION,
             embedding_dim=settings.EMBEDDING_DIM,
+            embedding_config_fingerprint=configuration.fingerprint(),
+            normalize_embeddings=configuration.normalize,
+            query_instruction=configuration.query_instruction,
         )
         corpus_version_id = str(corpus_ver["id"])
 
@@ -126,6 +135,27 @@ async def handle_jsonl_ingest(
             corpus_version_id=corpus_version_id,
             document_version_id=document_version_id,
             chunks=valid_chunks,
+        )
+        input_fingerprint = await repo.refresh_embedding_input_fingerprint(
+            corpus_version_id
+        )
+
+        # These payloads contain identifiers and hashes only.  They are claimed
+        # solely by a local-admin worker via app.core.worker_modes.
+        embedding_payload = {
+            "corpus_version_id": corpus_version_id,
+            "embedding_config_fingerprint": configuration.fingerprint(),
+            "embedding_input_fingerprint": input_fingerprint,
+        }
+        generation_key = f"{corpus_version_id}:{input_fingerprint}"
+        queue = JobQueueService(conn)
+        # The worker atomically completes each stage before enqueueing the next:
+        # chunks -> expected questions -> corpus completeness.  Only this first
+        # stage is created here, so readiness cannot race either embedding run.
+        await queue.enqueue_job(
+            "embed_chunks",
+            embedding_payload,
+            idempotency_key=f"phase3d:embed_chunks:{generation_key}",
         )
 
     logger.info(

@@ -17,8 +17,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
     EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"
-    EMBEDDING_MODEL_REVISION: str = "main"
+    EMBEDDING_MODEL_REVISION: str = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
     EMBEDDING_DIM: int = 768
+    WORKER_MODE: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

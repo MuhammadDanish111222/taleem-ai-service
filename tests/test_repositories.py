@@ -81,11 +81,18 @@ async def test_rag_repository_crud_vector_and_lexical(db_conn):
 
     # 2. Create corpus version
     cv = await repo.create_corpus_version(
-        str(corpus["id"]), 1, "text-embedding-3-small", "rev1", 768
+        str(corpus["id"]),
+        1,
+        "text-embedding-3-small",
+        "rev1",
+        768,
+        embedding_config_fingerprint="test-fingerprint",
     )
     assert cv["status"] == "building"
 
-    # 3. Activate corpus version
+    # 3. Empty test corpus still has to cross the Phase 3D readiness gate.
+    ready = await repo.mark_qa_ready(str(cv["id"]))
+    assert ready["ready"] is True
     act_ok = await repo.activate_corpus_version(str(cv["id"]), "admin_01")
     assert act_ok is True
 

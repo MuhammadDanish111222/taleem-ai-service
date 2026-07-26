@@ -16,6 +16,7 @@ dependencies = [
     "asyncpg>=0.29.0",
     "pgvector>=0.2.5",
     "transformers>=4.44.0",
+    "torch>=2.5.0",
 ]
 
 [dependency-groups]

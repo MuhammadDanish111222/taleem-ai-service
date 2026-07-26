@@ -70,3 +70,35 @@ This document logs significant architectural decisions and changes made for the 
 - **Decision:** BAAI/bge-base-en-v1.5 Token Counting Model Choice.
   - Configured `EMBEDDING_MODEL` as `BAAI/bge-base-en-v1.5` with `EMBEDDING_DIM = 768`, strictly matching the PostgreSQL `vector(768)` database schema across all RAG tables. Token counting loads only Hugging Face `AutoTokenizer` for `BAAI/bge-base-en-v1.5`, avoiding heavy model tensor loading.
 
+## Phase 3D: Embeddings and Corpus Completeness
+- **Decision:** Pinned BGE CLS embeddings.
+  - Bulk embeddings use only `BAAI/bge-base-en-v1.5@a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, CLS pooling (`last_hidden_state[:, 0]`), and L2 normalization. The version fingerprint covers the model, revision, dimensions, normalization, query instruction, and input formats.
+- **Decision:** Atomic durable stage chaining.
+  - JSONL ingestion initially queues only chunk embedding. A worker atomically marks a completed stage succeeded and enqueues the next (`chunks → questions → completeness`), preserving retries without allowing readiness to race embedding work.
+- **Decision:** Explicit worker ownership.
+  - `local_admin` alone owns JSONL and bulk embedding jobs. `railway_public` owns no durable job types until a tested bounded query-embedding path is introduced in Phase 3E.
+
+## Phase 3E: Scoped Retrieval
+- **Decision:** Use exact cosine distance for both vector channels.
+  - BGE vectors are already L2-normalized by Phase 3D. Exact pgvector `<=>` keeps chunk and individual expected-question retrieval on the same metric without an HNSW index at MVP scale.
+- **Decision:** Scope all retrieval in SQL to the active corpus version.
+  - Dense, expected-question, lexical, and optional chapter validation queries join corpus scope records and require board/class/subject plus the one active corpus version. Superseded, building, hidden, and other-scope content cannot be selected and expected-question rows resolve only to their parent chunk citation.
+- **Decision:** Deterministic rank-only RRF with inspectable contributions.
+  - RRF (`k=60`) fuses channel ranks with stable citation-ID tie-breaking. Returned DTOs contain safe citations and channel/rank contributions only; cosine distances, lexical scores, and numeric RRF weights remain internal and are never confidence or probability values.
+- **Decision:** Approved top-parent evidence policy.
+  - `none` means no scoped fused results. `strong` requires the top fused parent chunk to have at least two distinct retrieval channels ranked 1, 2, or 3; otherwise non-empty results are `weak`. Multiple expected-question matches for one parent are deduplicated before contiguous parent ranks are assigned, and can never count as two channels.
+- **Decision:** Query embeddings remain bounded on-demand work.
+  - The active corpus's stored BGE fingerprint is verified before inference, and `embed_queries` runs off the event loop. No `query_embedding` durable job or Railway worker ownership was added.
+
+## Phase 3F: Local Admin QA, Visual Metadata, and Transactional Activation
+- **Decision:** Keep visual assets server-only and embed reviewed metadata only.
+  - JSONL visuals are direct children of chunks and persist logical IDs, type, title, description, review/display state, and a server-only Google Drive key. Imports default to `pending`/`never`; only approved title/description enter a parent chunk's deterministic embedding input. Drive keys, IDs, URLs, and bytes never enter embeddings, audits, logs, or browser DTOs.
+- **Decision:** Make active snapshots immutable and edits targeted.
+  - Expected-question and visual edits are allowed only for `building`/`qa_ready` versions. An active version must first be cloned into a `building` draft that records its source. A question edit invalidates only that question; a visual title/description/review change invalidates only its parent chunk; display-policy-only edits do not re-embed. All of these changes invalidate current QA approval.
+- **Decision:** Keep local RAG administration unreachable from public deployment.
+  - `ADMIN_PANEL_ENABLED` is the first gate for local-admin pages and BFF routes. Writes then require the existing admin session, same-origin check, and CSRF check; the Python control plane independently requires a short-lived signed internal JWT with `admin=true`. The Drive preview proxy is local-admin gated and streams only PNG/JPEG/WebP/GIF with private no-store headers.
+- **Decision:** Revalidate activation state inside the lock transaction.
+  - Activation and rollback lock the corpus before its version rows, recheck status/scope, exact vector provenance/counters/jobs, current QA approval, and eligible visual storage, then switch the single active version and write a sanitized audit record atomically. Retrieval has no process cache today; activation calls an explicitly named no-op cache seam rather than claiming an invalidation that does not exist.
+- **Decision:** Preserve migration portability without changing applied history.
+  - `0003c_extensions_schema.sql` creates the standard PostgreSQL `extensions` schema before already-applied pgcrypto setup, and `0003e_pgcrypto_digest_compat.sql` provides the safe `public.digest(text,text)` compatibility wrapper needed by later migrations when `extensions` is outside `search_path`.
+
