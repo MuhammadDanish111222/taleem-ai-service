@@ -17,7 +17,12 @@ EMBEDDING_DIMENSIONS = 768
 QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 DOCUMENT_INPUT_FORMAT = "topic-heading-approved-visuals-v2"
 QUERY_INPUT_FORMAT = "bge-query-instruction-v1"
-ONNX_MODEL_FILENAME = "onnx/model.onnx"
+# Qdrant's Apache-2.0 quantized ONNX port of this exact BGE model keeps the
+# public query path within Railway's 1 GB memory limit. Pin both repository and
+# immutable revision independently from the source-model provenance above.
+ONNX_MODEL_REPO = "Qdrant/bge-base-en-v1.5-onnx-Q"
+ONNX_MODEL_REVISION = "738cad1c108e2f23649db9e44b2eab988626493b"
+ONNX_MODEL_FILENAME = "model_optimized.onnx"
 SUPPORTED_INFERENCE_RUNTIMES = frozenset({"torch", "onnx"})
 
 
@@ -176,9 +181,9 @@ class BGEEmbeddingProvider:
             ) from exc
 
         model_path = hf_hub_download(
-            repo_id=self.configuration.model,
+            repo_id=ONNX_MODEL_REPO,
             filename=ONNX_MODEL_FILENAME,
-            revision=self.configuration.revision,
+            revision=ONNX_MODEL_REVISION,
         )
         options = onnxruntime.SessionOptions()
         options.intra_op_num_threads = 1
