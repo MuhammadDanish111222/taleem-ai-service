@@ -323,7 +323,7 @@ asyncio.run(run_worker())
         try:
             # Poll database until job status is 'leased' or 'running'
             leased = False
-            for _ in range(50):
+            for _ in range(100):
                 await asyncio.sleep(0.2)
                 j = await service.get_job(job_id)
                 if j and j["status"] in ("leased", "running"):

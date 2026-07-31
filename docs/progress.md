@@ -2,6 +2,25 @@
 
 This document serves as a persistent record of the progress made on the Python-based AI microservice.
 
+## Module 4 — Ask a Question, Run 2 local delivery
+
+- **Status:** Local implementation and disposable-stack verification are complete; the Module 4 exit gate is still open.
+- **Service contract:** Single Ask accepts typed English text only, `short|long`, and backend-fixed `exam_style`. The backend assigns `approved_bank`, `syllabus_grounded`, or `general_knowledge`; General AI never receives textbook citations or visuals.
+- **Trusted and candidate pools:** Exact approved questions and exact approved variations are reusable without a provider call. Student LLM answers remain pending candidates. Local-admin authoring/import approves immediately after validation; candidate approval creates a corrected immutable revision with actor, timestamp, provenance, audit, and a link to the original candidate.
+- **Operations:** Prompt drafts can be created, edited, tested without student quota, activated, and rolled back. Candidate retention has bounded idempotent preview/cleanup, with pending/rejected rows eligible after 90 days and approved-linked records protected.
+- **Safety:** Redis Lua is the normal atomic quota path; PostgreSQL is the guarded fallback and authoritative mirror. JTI replay protection also has a hashed PostgreSQL fallback. Request UUIDs are identity-scoped and provider work is idempotent under concurrency. Visuals resolve only from reviewed database links.
+- **Semantic reuse:** The locked BGE configuration was evaluated with positive paraphrases and hard negatives. The shortest useful threshold admitted an ambiguous false positive; the only zero-false-positive threshold recalled one of three positives. Semantic reuse therefore remains intentionally disabled, while exact question and exact variation reuse remain enabled.
+- **Local verification:** Fresh migrations through `0009`, the legacy-upgrade fixture, and Module 4 database checks passed on PostgreSQL 17 + pgvector. The final isolated full suite passed `175` tests with one dependency deprecation warning. Ruff, Ruff format, compileall, startup/health smoke, worker ownership checks, and the controlled local browser/API scenarios passed.
+- **Real preflight:** The real Supabase database is PostgreSQL 17.6. Migration `0008` is recorded and its live schema matches; `0009` is absent and no partial Module 4 schema was detected. The pre-migration protected-table counts and grant/RLS state were recorded. No real mutation was made.
+- **Remaining exit work:** Owner authorization is required for the unchanged `0009` legacy-table retirement, paid provider calls, and any real retention deletion. Authenticated Railway/Vercel/Upstash/DeepSeek sessions, a support WhatsApp setting, real deployment/staging, commit/push, and green GitHub Actions are still pending.
+
+## Module 4 — Ask a Question, Run 1 of 2
+
+- **Status:** Backend foundation implemented and verified; Module 4 is not complete.
+- **Implemented:** Forward-only `0009_module4_ask_foundation.sql`; atomic Redis/PostgreSQL usage and JTI fallback; scoped versioned prompts; strict text-only DeepSeek adapter; approved-bank-first orchestration; pending candidate persistence/approval linkage; semantic reuse boundary disabled by default; deterministic citation/visual validation; local-admin prompt/candidate/bank operations; local question-bank embedding jobs.
+- **Verification:** Fresh PostgreSQL 17 + pgvector migration sequence and legacy upgrade fixture passed. Ruff, Ruff format, compileall, and the full service suite passed (`166` tests; one dependency deprecation warning).
+- **Run 2:** Build the student Ask UI and local prompt/candidate/bank interfaces, configure real Upstash/DeepSeek secrets, apply `0009` to the intended staging database, deploy, run real staging checks, and complete final documentation. No real DeepSeek request, deployment, commit, push, or real Supabase migration occurred in Run 1.
+
 ## Phase 0: Initial Setup
 - **Status:** Completed
 - **Details:** Initialized a Python backend using FastAPI, configured environments, and prepared the repository for Phase 3 (AI integrations).
@@ -83,6 +102,13 @@ This document serves as a persistent record of the progress made on the Python-b
 - **Status:** Completed.
 - **Details:** Extended JSONL chunks with optional multi-visual metadata, stored as direct `rag_chunks -> rag_visuals` rows with server-only Google Drive keys. Reviewed visual title/description is embedded deterministically with its parent chunk; pending/rejected visuals are excluded. Local admin can inspect durable jobs/version state/chunks/questions/visuals/audits, run named-version draft QA, edit draft questions/visuals, preview allowlisted image MIME types through the server-side Drive provider, approve QA, clone active snapshots, activate, and roll back.
 - **Safety:** All RAG administration is local-admin-only. `ADMIN_PANEL_ENABLED` runs before session, CSRF, parsing, or internal-service work; writes require admin session, same-origin, and CSRF checks; the Python endpoint independently requires signed admin JWTs. Browser DTOs, errors, and audits omit vectors, storage keys, Drive IDs/URLs, provider data, and secrets. `railway_public` still owns no durable bulk jobs.
-- **Activation:** One transaction locks `rag_corpora` then its versions, rechecks persisted readiness/provenance, QA approval, scope, and displayable visual storage, supersedes the old active snapshot, activates exactly one target, and audits activation/rollback. Active retrieval resolves the new database version immediately; the named cache seam is intentionally a no-op because no cache exists.
+- **Activation:** One transaction locks `rag_corpora` then its versions, rechecks persisted readiness/provenance, QA approval, scope, and displayable visual storage, supersedes the old active snapshot, activates exactly one target, and audits activation/rollback. Active version ID/configuration resolution uses a five-minute Redis cache; activation and rollback invalidate the scope key only after commit, and Redis failures fall back to PostgreSQL.
 - **Migration and verification:** Applied the forward-only portability helpers `0003c_extensions_schema.sql` and `0003e_pgcrypto_digest_compat.sql` and Phase 3F migration `0005_phase3f_local_admin.sql` on the configured Supabase connection without destructive operations. A fresh disposable PostgreSQL 17 + pgvector sequence applied all migrations. Rollback-safe Supabase integration tests cover visual import/draft cloning, targeted edits, activation rejection, named QA isolation, rollback, and concurrency; only the narrowly scoped concurrency fixture was committed, then deleted by its exact generated corpus/audit IDs. Final checks: `105 passed` service tests, `55 passed` emulator-aware web tests, focused Phase 3F DB/security tests, Ruff, Python compilation, TypeScript typecheck, web lint, and `git diff --check`.
+
+## Phase 3F extension: Paired JSONL + Visual Extracts DOCX Import
+
+- **Status:** Completed.
+- **Details:** Added an internal-admin audit endpoint and forward-only `0007_paired_chapter_import_audit.sql` state table for the web BFF's paired import. The established JSONL ingestion/worker flow remains unchanged; the BFF sends it only internally enriched records after private Drive visual upload.
+- **Safety:** The audit state stores hashes/counts and stable status only. It is RLS-enabled with public, anon, and authenticated privileges revoked. Direct service calls still require a signed admin internal JWT. Firebase hierarchy validation remains the prerequisite for real ingestion; no catalogue is created by the importer.
+- **Verification:** Applied `0007` to the configured Supabase database after confirming it was the only pending migration; verified the migration record, table, RLS, revoked client privileges, and unchanged corpus/chunk/job counts. A fresh pgvector migration sequence and complete service suite passed (`112`).
 

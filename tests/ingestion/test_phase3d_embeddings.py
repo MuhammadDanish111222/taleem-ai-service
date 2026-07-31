@@ -213,6 +213,78 @@ async def test_changed_configuration_requires_a_new_building_version(conn):
 
 
 @pytest.mark.asyncio
+async def test_same_configuration_reopens_qa_ready_version_for_next_chapter(conn):
+    repo, provider, corpus_version_id = await _building_corpus(conn, "next-chapter")
+    await embed_chunks(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    await embed_questions(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    await repo.refresh_embedding_counts(corpus_version_id)
+    assert (await repo.mark_qa_ready(corpus_version_id))["ready"] is True
+    await conn.execute(
+        """
+        INSERT INTO rag_corpus_qa_approvals
+            (corpus_version_id, reviewer_id, request_id, summary)
+        VALUES ($1::uuid, 'reviewer', 'next-chapter', '{}'::jsonb);
+        """,
+        corpus_version_id,
+    )
+
+    reopened = await repo.get_or_create_building_corpus_version(
+        "board-next-chapter",
+        "class-9",
+        "physics",
+        provider.configuration.model,
+        provider.configuration.revision,
+        provider.configuration.dimensions,
+        provider.configuration_fingerprint,
+        provider.configuration.normalize,
+        provider.configuration.query_instruction,
+    )
+
+    assert str(reopened["id"]) == corpus_version_id
+    assert reopened["status"] == "building"
+    assert await conn.fetchval(
+        """
+        SELECT invalidated_at IS NOT NULL
+        FROM rag_corpus_qa_approvals
+        WHERE corpus_version_id = $1::uuid;
+        """,
+        corpus_version_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_subject_requires_an_explicit_editable_draft_for_import(conn):
+    repo, provider, corpus_version_id = await _building_corpus(conn, "active-import")
+    await embed_chunks(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    await embed_questions(
+        corpus_version_id, provider.configuration_fingerprint, conn, provider
+    )
+    await repo.refresh_embedding_counts(corpus_version_id)
+    assert (await repo.mark_qa_ready(corpus_version_id))["ready"] is True
+    assert await repo.activate_corpus_version(corpus_version_id, "test-admin")
+
+    with pytest.raises(ValueError, match="ACTIVE_CORPUS_REQUIRES_EDITABLE_DRAFT"):
+        await repo.get_or_create_building_corpus_version(
+            "board-active-import",
+            "class-9",
+            "physics",
+            provider.configuration.model,
+            provider.configuration.revision,
+            provider.configuration.dimensions,
+            provider.configuration_fingerprint,
+            provider.configuration.normalize,
+            provider.configuration.query_instruction,
+            require_existing_draft_after_activation=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_worker_modes_cannot_claim_each_others_jobs(conn):
     jobs = JobRepository(conn)
     local_job = await jobs.create_job("embed_chunks", {"corpus_version_id": "scope"})

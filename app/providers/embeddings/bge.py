@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import asdict, dataclass
 from typing import Sequence
 
@@ -99,6 +100,8 @@ class BGEEmbeddingProvider:
             )
         self._tokenizer = None
         self._model = None
+        self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     @property
     def configuration_fingerprint(self) -> str:
@@ -107,35 +110,39 @@ class BGEEmbeddingProvider:
     def _load(self) -> None:
         if self._model is not None:
             return
-        try:
-            import torch
-            from transformers import AutoModel, AutoTokenizer
-        except ImportError as exc:
-            raise RuntimeError(
-                "BGE embedding requires the declared torch and transformers dependencies."
-            ) from exc
-        self._torch = torch
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self.configuration.model, revision=self.configuration.revision
-        )
-        self._model = AutoModel.from_pretrained(
-            self.configuration.model, revision=self.configuration.revision
-        )
-        self._model.eval()
+        with self._load_lock:
+            if self._model is not None:
+                return
+            try:
+                import torch
+                from transformers import AutoModel, AutoTokenizer
+            except ImportError as exc:
+                raise RuntimeError(
+                    "BGE embedding requires the declared torch and transformers dependencies."
+                ) from exc
+            self._torch = torch
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.configuration.model, revision=self.configuration.revision
+            )
+            self._model = AutoModel.from_pretrained(
+                self.configuration.model, revision=self.configuration.revision
+            )
+            self._model.eval()
 
     def _embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
         self._load()
         assert self._tokenizer is not None and self._model is not None
-        batch = self._tokenizer(
-            list(texts), padding=True, truncation=True, return_tensors="pt"
-        )
-        with self._torch.no_grad():
-            model_output = self._model(**batch)
-            vectors = model_output.last_hidden_state[:, 0]
-            vectors = self._torch.nn.functional.normalize(vectors, p=2, dim=1)
-        result = [[float(value) for value in row] for row in vectors.tolist()]
+        with self._inference_lock:
+            batch = self._tokenizer(
+                list(texts), padding=True, truncation=True, return_tensors="pt"
+            )
+            with self._torch.no_grad():
+                model_output = self._model(**batch)
+                vectors = model_output.last_hidden_state[:, 0]
+                vectors = self._torch.nn.functional.normalize(vectors, p=2, dim=1)
+            result = [[float(value) for value in row] for row in vectors.tolist()]
         self._validate_vectors(result)
         return result
 

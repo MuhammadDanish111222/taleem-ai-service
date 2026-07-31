@@ -2,6 +2,28 @@
 
 This document logs significant architectural decisions and changes made for the Python AI microservice.
 
+## Module 4 Run 1 decisions
+
+- **Decision:** Keep exactly two logical answer pools.
+  - `ai_requests`/`ai_answers` hold generated operational candidates; the normalized revision bank is the sole trusted reusable source. Legacy bank rows are migrated and the old table is retired rather than kept as a second authority.
+- **Decision:** Approval is an explicit admin action.
+  - Valid local-admin-authored/imported questions are approved immediately with actor/time/audit provenance. Student LLM output always starts pending; approval creates a bank revision, links and retains the original candidate, and never silently trusts generation.
+- **Decision:** Make source assignment and reference validation non-editable.
+  - The backend alone assigns `approved_bank`, `syllabus_grounded`, or `general_knowledge`. Editable prompts cannot override source choice, structured validation, the text-only boundary, or the rule that General AI has no textbook citations or visuals.
+- **Decision:** Treat PostgreSQL as the quota continuity authority.
+  - Redis Lua is the normal atomic decision path, while every reservation is mirrored transactionally with the pending request. Identity-scoped idempotency prevents same UUIDs from colliding across users; guarded PostgreSQL fallback and HMAC-hashed JTI claims preserve limits and replay protection during Redis outages.
+
+## Module 4 Run 2 decisions
+
+- **Decision:** Keep semantic approved reuse disabled at launch.
+  - The locked BGE evaluation included paraphrases, punctuation/case variants, closely related questions, cross-chapter/subject hard negatives, and short ambiguous text. A useful-recall threshold reused an ambiguous negative, so precision did not satisfy the safe-launch gate. Exact approved questions and exact approved variations remain enabled.
+- **Decision:** Make cache invalidation database-authoritative.
+  - Prompt activation/rollback changes a PostgreSQL generation in the same transaction as the active version. Redis publication accelerates sharing but cannot become the only invalidation authority.
+- **Decision:** Fail closed on logical visual ambiguity.
+  - A visual is served only when its logical ID resolves uniquely to a reviewed approved/grounded link. Provider output cannot introduce a URL, Drive ID, storage key, or arbitrary visual identifier.
+- **Decision:** Separate implementation completion from the real exit gate.
+  - Passing disposable-stack and local browser tests does not authorize a real migration, provider charge, deployment, retention deletion, commit, or completion claim. Module 4 stays open until those real checks are directly verified.
+
 ## Phase 0: Framework & Architecture
 - **Decision:** Python + FastAPI over Node.js for AI tasks.
 - **Change Details:**
@@ -58,7 +80,7 @@ This document logs significant architectural decisions and changes made for the 
 - **Decision:** Mandatory Firestore 4-Level Ancestor Chain Verification.
   - Every row's `board_id`, `class_id`, `subject_id`, `chapter_id` must exist and have `active == True` in Firestore (`boards/{board_id}/classes/{class_id}/subjects/{subject_id}/chapters/{chapter_id}`). If Firestore client is unavailable or any level is inactive/non-existent, the job fails loudly with `RuntimeError`.
 - **Decision:** Single 'Building' Corpus Version Accumulation per Subject Scope.
-  - Multiple chapter JSONL uploads for the same subject (`board_id`, `class_id`, `subject_id`) accumulate chunks into a single `building` corpus version.
+  - Multiple chapter JSONL uploads for the same subject (`board_id`, `class_id`, `subject_id`) accumulate into one pre-activation corpus version. A same-configuration `qa_ready` snapshot is reopened as `building` for the next chapter and any prior QA approval is invalidated; active snapshots remain immutable and require the draft flow.
 - **Decision:** Parent Corpora Locking Hierarchy (`FOR UPDATE`).
   - To prevent check-then-act race conditions between concurrent worker threads, `get_or_create_building_corpus_version` performs `INSERT INTO rag_corpora ... ON CONFLICT DO UPDATE ... RETURNING id` and locks the parent `rag_corpora` row (`SELECT id FROM rag_corpora WHERE id = $1 FOR UPDATE`) before querying/creating `rag_corpus_versions`.
 - **Decision:** Document-Level Atomic Replacement & Count Reconciliation.
@@ -92,13 +114,22 @@ This document logs significant architectural decisions and changes made for the 
 
 ## Phase 3F: Local Admin QA, Visual Metadata, and Transactional Activation
 - **Decision:** Keep visual assets server-only and embed reviewed metadata only.
-  - JSONL visuals are direct children of chunks and persist logical IDs, type, title, description, review/display state, and a server-only Google Drive key. Imports default to `pending`/`never`; only approved title/description enter a parent chunk's deterministic embedding input. Drive keys, IDs, URLs, and bytes never enter embeddings, audits, logs, or browser DTOs.
+  - JSONL visuals are direct children of chunks and persist logical IDs, type, title, description, review/display state, and a server-only Google Drive key. Imports default to `pending`/`llm_decide`; only approved title/description enter a parent chunk's deterministic embedding input. Drive keys, IDs, URLs, and bytes never enter embeddings, audits, logs, or browser DTOs.
 - **Decision:** Make active snapshots immutable and edits targeted.
   - Expected-question and visual edits are allowed only for `building`/`qa_ready` versions. An active version must first be cloned into a `building` draft that records its source. A question edit invalidates only that question; a visual title/description/review change invalidates only its parent chunk; display-policy-only edits do not re-embed. All of these changes invalidate current QA approval.
 - **Decision:** Keep local RAG administration unreachable from public deployment.
   - `ADMIN_PANEL_ENABLED` is the first gate for local-admin pages and BFF routes. Writes then require the existing admin session, same-origin check, and CSRF check; the Python control plane independently requires a short-lived signed internal JWT with `admin=true`. The Drive preview proxy is local-admin gated and streams only PNG/JPEG/WebP/GIF with private no-store headers.
 - **Decision:** Revalidate activation state inside the lock transaction.
-  - Activation and rollback lock the corpus before its version rows, recheck status/scope, exact vector provenance/counters/jobs, current QA approval, and eligible visual storage, then switch the single active version and write a sanitized audit record atomically. Retrieval has no process cache today; activation calls an explicitly named no-op cache seam rather than claiming an invalidation that does not exist.
+  - Activation and rollback lock the corpus before its version rows, recheck status/scope, exact vector provenance/counters/jobs, current QA approval, and eligible visual storage, then switch the single active version and write a sanitized audit record atomically. Active version ID/configuration resolution uses a five-minute Redis cache keyed by a hashed board/class/subject scope. The cache is invalidated after activation commits and fails open to PostgreSQL without caching questions, vectors, or results.
 - **Decision:** Preserve migration portability without changing applied history.
   - `0003c_extensions_schema.sql` creates the standard PostgreSQL `extensions` schema before already-applied pgcrypto setup, and `0003e_pgcrypto_digest_compat.sql` provides the safe `public.digest(text,text)` compatibility wrapper needed by later migrations when `extensions` is outside `search_path`.
+
+## Phase 3F extension: Paired Import Audit and Ingestion Boundary
+
+- **Decision:** Keep paired upload/cropping and private Drive access in the local web BFF.
+  - The service receives no Word document or image bytes. It accepts only authenticated internal audit events and the already-established signed JSONL ingestion request; its existing hierarchy validator remains the authority for active Firebase scope.
+- **Decision:** Persist non-sensitive retry state only.
+  - `0007_paired_chapter_import_audit.sql` stores import/asset hashes, counts, status, optional job ID, and stable error code. RLS and revoked client grants keep this operational state service-only, while excluding storage keys, identifiers, URLs, bytes, raw JSONL, and enriched JSONL.
+- **Decision:** Reuse normal ingestion and QA instead of a parallel corpus workflow.
+  - The paired flow cannot auto-create catalogue hierarchy or activate a corpus. Its visuals enter the ordinary `pending` review state with `llm_decide` as the eventual display policy; local workers own JSONL/embedding jobs and Railway-public owns none. No paid OCR or LLM/vision service is used.
 

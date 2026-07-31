@@ -72,9 +72,12 @@ async def test_visual_insert_gets_updated_at_and_active_clone_copies_visual():
             ],
         )
         visual = await conn.fetchrow(
-            "SELECT updated_at FROM rag_visuals WHERE chunk_id=$1", inserted[0]["id"]
+            "SELECT updated_at, review_status, display_policy FROM rag_visuals WHERE chunk_id=$1",
+            inserted[0]["id"],
         )
         assert visual["updated_at"] is not None
+        assert visual["review_status"] == "pending"
+        assert visual["display_policy"] == "llm_decide"
         await repo.write_chunk_embedding(
             str(inserted[0]["id"]),
             str(version["id"]),

@@ -345,6 +345,18 @@ async def test_first_ingestion_concurrent_corpus_creation_race():
     )
     assert total_versions == 1
 
+    # This test commits two transactions to exercise locking, so it cannot rely
+    # on the usual transaction-rollback fixture for cleanup.
+    await conn1.execute(
+        """
+        DELETE FROM rag_corpora
+        WHERE board_id = $1 AND class_id = $2 AND subject_id = $3;
+        """,
+        board_id,
+        class_id,
+        subject_id,
+    )
+
     await conn1.close()
     await conn2.close()
 

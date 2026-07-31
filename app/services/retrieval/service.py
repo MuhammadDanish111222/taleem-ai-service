@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any, Protocol
 
 import asyncpg
 
 from app.providers.embeddings.bge import BGEEmbeddingConfiguration, BGEEmbeddingProvider
 from app.repositories.rag_repository import RagRepository
+from app.services.retrieval.active_version_cache import (
+    ActiveCorpusVersionCache,
+    get_active_corpus_version_cache,
+)
 from app.services.retrieval.evidence import (
     Citation,
     EvidenceResult,
     RetrievalChannel,
     RetrievalScope,
+    RetrievedEvidence,
+    RetrievedVisual,
     classify_evidence,
 )
 from app.services.retrieval.fusion import RankedChannelHit, fuse_ranked_hits
@@ -35,6 +42,14 @@ class RetrievalScopeError(ValueError):
     """The optional chapter is outside the supplied active corpus scope."""
 
 
+@lru_cache(maxsize=4)
+def _cached_bge_provider(
+    configuration: BGEEmbeddingConfiguration,
+) -> BGEEmbeddingProvider:
+    """Reuse loaded model weights for repeated query embeddings in one process."""
+    return BGEEmbeddingProvider(configuration)
+
+
 class RetrievalService:
     """Retrieves only from the exact active corpus selected by a supplied scope."""
 
@@ -47,25 +62,64 @@ class RetrievalService:
         dense_top_k: int = 10,
         expected_question_top_k: int = 10,
         lexical_top_k: int = 10,
+        active_version_cache: ActiveCorpusVersionCache | None = None,
     ):
         if min(dense_top_k, expected_question_top_k, lexical_top_k) < 1:
             raise ValueError("RETRIEVAL_TOP_K_MUST_BE_POSITIVE")
         self._repo = RagRepository(conn)
-        self._provider_factory = provider_factory or BGEEmbeddingProvider
+        self._provider_factory = provider_factory or _cached_bge_provider
         self._dense_top_k = dense_top_k
         self._expected_question_top_k = expected_question_top_k
         self._lexical_top_k = lexical_top_k
+        self._active_version_cache = (
+            active_version_cache or get_active_corpus_version_cache()
+        )
 
     async def retrieve(self, question: str, scope: RetrievalScope) -> EvidenceResult:
         """Run all three channels without logging question text or provider output."""
-        active_version = await self._repo.get_active_corpus_version(
+        active_version = await self._active_version_cache.get(
             scope.board_id, scope.class_id, scope.subject_id
         )
+        if active_version is None:
+            active_version = await self._repo.get_active_corpus_version(
+                scope.board_id, scope.class_id, scope.subject_id
+            )
+            if active_version is not None:
+                await self._active_version_cache.set(
+                    scope.board_id,
+                    scope.class_id,
+                    scope.subject_id,
+                    active_version,
+                )
         if active_version is None:
             return classify_evidence(())
         return await self._retrieve_version(
             question, scope, active_version, allow_named_draft=False
         )
+
+    async def embed_query_for_approved_reuse(
+        self, question: str, scope: RetrievalScope
+    ) -> list[float] | None:
+        """Embed only when an evaluated semantic-reuse policy explicitly enables it."""
+        active_version = await self._active_version_cache.get(
+            scope.board_id, scope.class_id, scope.subject_id
+        )
+        if active_version is None:
+            active_version = await self._repo.get_active_corpus_version(
+                scope.board_id, scope.class_id, scope.subject_id
+            )
+        if active_version is None:
+            return None
+        configuration = self._configuration_from_active_version(active_version)
+        provider = self._provider_factory(configuration)
+        if provider.configuration_fingerprint != configuration.fingerprint():
+            raise RetrievalConfigurationError("QUERY_PROVIDER_CONFIGURATION_MISMATCH")
+        vectors = await asyncio.to_thread(
+            provider.embed_queries, [" ".join(question.split())]
+        )
+        if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
+            raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
+        return vectors[0]
 
     async def retrieve_named_version(
         self, question: str, scope: RetrievalScope, corpus_version_id: str
@@ -172,7 +226,36 @@ class RetrievalService:
             *self._channel_hits(expected_rows, RetrievalChannel.EXPECTED_QUESTION),
             *self._channel_hits(lexical_rows, RetrievalChannel.LEXICAL),
         ]
-        return classify_evidence(fuse_ranked_hits(hits))
+        fused = fuse_ranked_hits(hits)
+        visual_map = await self._repo.get_eligible_retrieval_visuals(
+            [item.citation.citation_id for item in fused[:4]]
+        )
+        with_visuals = tuple(
+            RetrievedEvidence(
+                citation=Citation(
+                    citation_id=item.citation.citation_id,
+                    content=item.citation.content,
+                    chapter_id=item.citation.chapter_id,
+                    topic_no=item.citation.topic_no,
+                    topic_title=item.citation.topic_title,
+                    page_start=item.citation.page_start,
+                    page_end=item.citation.page_end,
+                    visuals=tuple(
+                        RetrievedVisual(
+                            visual_id=visual["visual_id"],
+                            title=visual["title"],
+                            description=visual["description"],
+                            display_policy=visual["display_policy"],
+                        )
+                        for visual in visual_map.get(item.citation.citation_id, ())
+                    ),
+                ),
+                fused_rank=item.fused_rank,
+                contributions=item.contributions,
+            )
+            for item in fused
+        )
+        return classify_evidence(with_visuals)
 
     @staticmethod
     def _configuration_from_active_version(

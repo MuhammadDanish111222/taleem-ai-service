@@ -6,9 +6,12 @@ import pytest
 
 from app.db.migrator import run_migrations
 
+# Tests must never silently inherit the application database configured in .env.
+# A caller may opt in to another disposable database through TEST_DATABASE_URL.
 DB_URL = os.getenv(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev"
+    "TEST_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev"
 )
+os.environ["DATABASE_URL"] = DB_URL
 
 
 async def _ensure_migrated():

@@ -1,0 +1,170 @@
+{
+  "approved": [
+    {
+      "revision_id": "physics-force",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "force-and-laws",
+      "answer_mode": "short",
+      "text": "Define force."
+    },
+    {
+      "revision_id": "physics-acceleration",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "kinematics",
+      "answer_mode": "short",
+      "text": "Define acceleration."
+    },
+    {
+      "revision_id": "physics-velocity",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "kinematics",
+      "answer_mode": "short",
+      "text": "Differentiate between speed and velocity."
+    },
+    {
+      "revision_id": "physics-second-law",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "force-and-laws",
+      "answer_mode": "long",
+      "text": "Explain Newton's second law of motion."
+    },
+    {
+      "revision_id": "biology-respiration",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "biology",
+      "chapter_id": "bioenergetics",
+      "answer_mode": "short",
+      "text": "Define cellular respiration."
+    },
+    {
+      "revision_id": "chemistry-equation",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "chemistry",
+      "chapter_id": "chemical-reactions",
+      "answer_mode": "short",
+      "text": "What is a balanced chemical equation?"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "positive-force-paraphrase",
+      "category": "positive_paraphrase",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "force-and-laws",
+      "answer_mode": "short",
+      "query": "What is meant by force?",
+      "expected_revision_id": "physics-force"
+    },
+    {
+      "case_id": "positive-acceleration-paraphrase",
+      "category": "positive_paraphrase",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "kinematics",
+      "answer_mode": "short",
+      "query": "What does acceleration mean?",
+      "expected_revision_id": "physics-acceleration"
+    },
+    {
+      "case_id": "case-and-punctuation",
+      "category": "punctuation_case",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "force-and-laws",
+      "answer_mode": "short",
+      "query": "DEFINE FORCE!!!",
+      "expected_revision_id": "physics-force"
+    },
+    {
+      "case_id": "related-force-unit",
+      "category": "closely_related_different",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "force-and-laws",
+      "answer_mode": "short",
+      "query": "What is the SI unit of force?",
+      "expected_revision_id": null
+    },
+    {
+      "case_id": "related-acceleration-unit",
+      "category": "same_terminology_different_answer",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "kinematics",
+      "answer_mode": "short",
+      "query": "State the SI unit of acceleration.",
+      "expected_revision_id": null
+    },
+    {
+      "case_id": "velocity-formula-not-definition",
+      "category": "same_terminology_different_answer",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "kinematics",
+      "answer_mode": "short",
+      "query": "Write the formula for velocity.",
+      "expected_revision_id": null
+    },
+    {
+      "case_id": "cross-chapter-resistance",
+      "category": "cross_chapter_hard_negative",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": "electricity",
+      "answer_mode": "short",
+      "query": "Define electrical resistance.",
+      "expected_revision_id": null
+    },
+    {
+      "case_id": "cross-subject-force",
+      "category": "cross_subject_hard_negative",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "biology",
+      "chapter_id": null,
+      "answer_mode": "short",
+      "query": "What is force?",
+      "expected_revision_id": null
+    },
+    {
+      "case_id": "short-force",
+      "category": "short_ambiguous",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": null,
+      "answer_mode": "short",
+      "query": "Force?",
+      "expected_revision_id": null
+    },
+    {
+      "case_id": "short-motion",
+      "category": "short_ambiguous",
+      "board_id": "punjab",
+      "class_id": "class-9",
+      "subject_id": "physics",
+      "chapter_id": null,
+      "answer_mode": "short",
+      "query": "Motion?",
+      "expected_revision_id": null
+    }
+  ]
+}

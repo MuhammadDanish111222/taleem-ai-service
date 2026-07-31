@@ -18,6 +18,9 @@ from app.core.config import get_settings
 from app.core.worker_modes import owned_job_types, resolve_worker_mode
 from app.services.ingestion.completeness import handle_corpus_completeness
 from app.services.ingestion.embed_chunks import handle_embed_chunks
+from app.services.ingestion.embed_question_bank import (
+    handle_question_bank_embeddings,
+)
 from app.services.ingestion.embed_questions import handle_embed_questions
 from app.services.jobs.queue import JobQueueService
 from app.workers.handlers.jsonl_ingest import handle_jsonl_ingest
@@ -244,6 +247,7 @@ register_handler("jsonl_ingest", handle_jsonl_ingest)
 register_handler("embed_chunks", handle_embed_chunks)
 register_handler("embed_questions", handle_embed_questions)
 register_handler("corpus_completeness", handle_corpus_completeness)
+register_handler("question_bank_embeddings", handle_question_bank_embeddings)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":

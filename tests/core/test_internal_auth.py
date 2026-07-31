@@ -1,5 +1,6 @@
+import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -7,7 +8,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 
-from app.core.internal_auth import verify_internal_jwt
+from app.core.internal_auth import get_public_keys, verify_internal_jwt
+
+pytestmark = pytest.mark.asyncio
 
 # Generate a temporary RSA key pair for testing
 private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -57,7 +60,14 @@ def create_token(
 
 @pytest.fixture
 def mock_redis():
-    with patch("app.core.internal_auth.get_redis") as mock_get_redis:
+    with (
+        patch("app.core.internal_auth.get_redis") as mock_get_redis,
+        patch(
+            "app.core.internal_auth._record_jti_postgres",
+            new=AsyncMock(return_value=True),
+        ),
+        patch("app.core.internal_auth._jti_hash", return_value="a" * 64),
+    ):
         mock_client = MagicMock()
         # Atomic set returns True when setting a new key
         mock_client.set.return_value = True
@@ -72,49 +82,59 @@ def mock_keys():
         yield mock_get_keys
 
 
-def test_missing_token():
+async def test_missing_token():
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt("")
+        await verify_internal_jwt("")
     assert exc_info.value.status_code == 401
     assert "Missing or invalid authorization header" in str(
         exc_info.value.detail["message"]
     )
 
 
-def test_expired_token(mock_keys, mock_redis):
+async def test_public_key_configuration_unescapes_pem_newlines():
+    settings = MagicMock()
+    settings.INTERNAL_JWT_PUBLIC_KEYS_JSON = json.dumps(
+        {"test-key": public_pem.replace("\n", "\\n")}
+    )
+
+    with patch("app.core.internal_auth.get_settings", return_value=settings):
+        assert get_public_keys() == {"test-key": public_pem}
+
+
+async def test_expired_token(mock_keys, mock_redis):
     token = create_token(exp_delta=-10)
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail["code"] == "AUTH_EXPIRED_TOKEN"
 
 
-def test_ttl_exceeds_60_seconds(mock_keys, mock_redis):
+async def test_ttl_exceeds_60_seconds(mock_keys, mock_redis):
     now = int(time.time())
     token = create_token(iat=now, exp=now + 120)
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "Token TTL exceeds maximum 60s" in exc_info.value.detail["message"]
 
 
-def test_exp_before_iat(mock_keys, mock_redis):
+async def test_exp_before_iat(mock_keys, mock_redis):
     now = int(time.time())
     token = create_token(iat=now, exp=now - 5)
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
 
 
-def test_wrong_audience(mock_keys, mock_redis):
+async def test_wrong_audience(mock_keys, mock_redis):
     token = create_token(aud="wrong-audience")
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "Invalid token" in str(exc_info.value.detail["message"])
 
 
-def test_wrong_signature(mock_keys, mock_redis):
+async def test_wrong_signature(mock_keys, mock_redis):
     other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     other_pem = other_key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -137,14 +157,14 @@ def test_wrong_signature(mock_keys, mock_redis):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
 
 
 @pytest.mark.parametrize(
     "claim_name", ["uid", "admin", "feature", "request_id", "jti", "iat", "exp"]
 )
-def test_missing_mandatory_claims(mock_keys, mock_redis, claim_name):
+async def test_missing_mandatory_claims(mock_keys, mock_redis, claim_name):
     now = int(time.time())
     payload = {
         "uid": "user123",
@@ -163,72 +183,70 @@ def test_missing_mandatory_claims(mock_keys, mock_redis, claim_name):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
 
 
-def test_non_boolean_admin_claim(mock_keys, mock_redis):
+async def test_non_boolean_admin_claim(mock_keys, mock_redis):
     token = create_token(admin="true")  # String instead of bool
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "admin" in str(exc_info.value.detail["message"])
 
 
-def test_empty_feature_claim(mock_keys, mock_redis):
+async def test_empty_feature_claim(mock_keys, mock_redis):
     token = create_token(feature="")
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "feature" in str(exc_info.value.detail["message"])
 
 
-def test_empty_request_id_claim(mock_keys, mock_redis):
+async def test_empty_request_id_claim(mock_keys, mock_redis):
     token = create_token(request_id="")
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "request_id" in str(exc_info.value.detail["message"])
 
 
-def test_empty_jti_claim(mock_keys, mock_redis):
+async def test_empty_jti_claim(mock_keys, mock_redis):
     token = create_token(jti="")
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "jti" in str(exc_info.value.detail["message"])
 
 
-def test_replayed_jti(mock_keys, mock_redis):
+async def test_replayed_jti(mock_keys, mock_redis):
     # Set returns None when key already exists
     mock_redis.set.return_value = None
     token = create_token(jti="used-jti")
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail["code"] == "AUTH_REPLAY_DETECTED"
 
 
-def test_wrong_issuer(mock_keys, mock_redis):
+async def test_wrong_issuer(mock_keys, mock_redis):
     token = create_token(iss="wrong-issuer")
     with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
+        await verify_internal_jwt(f"Bearer {token}")
     assert exc_info.value.status_code == 401
     assert "Invalid token" in str(exc_info.value.detail["message"])
 
 
-def test_redis_unavailable_rejects_token(mock_keys, mock_redis):
+async def test_redis_unavailable_uses_postgres_fallback(mock_keys, mock_redis):
     mock_redis.set.side_effect = Exception("Redis connection refused")
     token = create_token()
-    with pytest.raises(HTTPException) as exc_info:
-        verify_internal_jwt(f"Bearer {token}")
-    assert exc_info.value.status_code == 401
-    assert exc_info.value.detail["code"] == "AUTH_REDIS_ERROR"
+    ctx = await verify_internal_jwt(f"Bearer {token}")
+    assert ctx.uid == "user123"
 
 
-def test_valid_token(mock_keys, mock_redis):
+async def test_valid_token(mock_keys, mock_redis):
     token = create_token()
-    ctx = verify_internal_jwt(f"Bearer {token}")
+    ctx = await verify_internal_jwt(f"Bearer {token}")
     assert ctx.uid == "user123"
     assert not ctx.is_admin
     assert ctx.feature == "test"

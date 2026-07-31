@@ -2,6 +2,26 @@
 
 This document provides the definitive architectural design, database schema specifications, and database governance contracts for `taleem-ai-service`.
 
+## Module 4 Run 1: Ask backend foundation
+
+- `ai_requests`/`ai_answers` remain the only operational generated-candidate pool. Student LLM answers are pending, retain provider/prompt/corpus provenance, and expire after 90 days unless approval links them to the trusted bank.
+- The former lightweight `approved_question_bank` is migrated into one normalized bank with stable questions, immutable revisions, variations, MCQ options, reviewed citations/visual links, and local BGE embedding jobs. Admin-authored/imported rows are approved immediately; generated rows never become reusable without explicit audited approval.
+- `answer_mode`, `answer_style`, and backend-assigned `answer_source` are independent. Single Ask accepts typed-text `short|long` with `exam_style`; files, images, PDFs, OCR, `mcq`, and `mixed` are outside Module 4.
+- Ask resolves exact approved questions, exact approved variations, optional evaluated semantic reuse, scoped Phase 3E retrieval, then grounded or explicitly enabled General AI generation. Semantic reuse is disabled by default and has no default threshold.
+- Editable prompts are PostgreSQL-versioned and resolve board+class+subject, class+subject, subject, then global. Immutable source/safety rules remain in code. Activation/rollback and the shared prompt-cache generation change in one database transaction.
+- Redis performs atomic quota reservation with PostgreSQL as the authoritative mirror/fallback. Request UUIDs are identity-scoped. Pakistan business days reset at midnight in `Asia/Karachi`; PostgreSQL also mirrors HMAC-hashed internal JWT JTIs so Redis outages do not disable replay protection.
+- Generated output is validated as a whole. Invented or mixed-invalid citations/visuals fail; General AI has neither; `always` visuals are appended deterministically. Provider input contains text plus approved metadata only, never image bytes, storage identifiers, URLs, or raw vectors.
+
+## Module 4 Run 2: Operational Ask architecture
+
+- The public contract remains one typed-text Single Ask. `answer_mode` (`short|long`), `answer_style` (`exam_style`), and server-owned `answer_source` are separate dimensions. Module 5 OCR, uploads, PDFs, images, multipart input, and Multiple Ask are not present.
+- The two logical answer pools have distinct trust states: normalized approved questions/revisions/variations are reusable, while `ai_requests`/`ai_answers` are operational generated candidates. An unapproved candidate can never satisfy a later Ask.
+- Prompt resolution is most-specific-first: board+class+subject, class+subject, subject, then global, separately for grounded/general and mode. Activation or rollback increments a PostgreSQL cache generation and publishes Redis invalidation so the next request observes the change.
+- Redis stores only opaque/HMAC-hashed identifiers and bounded counters/cache entries. It contains no raw UID, question, answer, profile, Drive identifier, or storage key. Usage is reserved atomically and expires at Pakistan midnight; PostgreSQL prevents unlimited access, duplicate quota, and replay when Redis is unavailable.
+- Approved and grounded visual blocks carry only logical visual IDs to the web. The protected resolver checks reviewed database links and a configured storage allowlist; ambiguous, invented, or unreviewed IDs fail closed. General AI has no visual/citation path.
+- The provider adapter uses environment-configurable `deepseek-v4-flash`, non-thinking mode, JSON object output, bounded characters/tokens, timeout, and retries. The actual provider/model is persisted per attempt; prompt draft tests are audited without raw prompt or question content.
+- Semantic approved matching is off until an evaluation demonstrates acceptable precision. The locked BGE model/revision is used only against approved questions and approved variations, never candidate answers.
+
 ---
 
 ## 1. Migration Strategy & Runner Rationale
@@ -56,7 +76,7 @@ This document provides the definitive architectural design, database schema spec
 ### Phase 3F Local Admin QA, Visuals, and Activation (`0005_phase3f_local_admin.sql`)
 
 - A chunk owns zero or more direct `rag_visuals` rows. Each row has a stable logical `visual_id`, type, nonblank title/description, `google_drive` provider, server-only storage key, display policy, review status, normalized text hash, and timestamps. The database relation remains `rag_chunks -> rag_visuals`; image bytes and Drive identifiers are never copied to Postgres or browser DTOs.
-- JSONL may supply an optional `visuals` array. New imports are `pending` and `never` by default. Only approved visual title/description participate in parent-chunk embedding input, ordered by logical `visual_id`; keys, provider IDs, paths, database IDs, and image bytes never participate.
+- JSONL may supply an optional `visuals` array. New imports are `pending` with `llm_decide` display policy by default. Only approved visual title/description participate in parent-chunk embedding input, ordered by logical `visual_id`; keys, provider IDs, paths, database IDs, and image bytes never participate.
 - `rag_corpus_qa_approvals` persists the local reviewer, timestamp, request ID, and a safe action summary. Source, question, visual metadata, and display-policy edits invalidate an approval. `source_corpus_version_id` records active-to-building editable drafts.
 
 ---
@@ -113,9 +133,9 @@ To prevent race conditions, duplicate version generation, and database deadlocks
 2. **Corpus Version Lock (Second)**: `SELECT status FROM rag_corpus_versions WHERE id = $1 FOR UPDATE`.
 
 ### Governance Contract:
-- **Phase 3C (Chunk Ingestion)**: Locks `rag_corpora` to check/create the single `building` corpus version for a subject scope, then locks `rag_corpus_versions` to verify `status == 'building'` before replacing chapter chunks and expected questions.
+- **Phase 3C (Chunk Ingestion)**: Locks `rag_corpora` to check/create the single `building` corpus version for a subject scope. Before first activation, a same-configuration `qa_ready` version is reopened as `building` so chapter-by-chapter imports extend one subject snapshot and invalidate any prior QA approval. It then locks `rag_corpus_versions` to verify `status == 'building'` before replacing chapter chunks and expected questions.
 - **Phase 3D (Embedding)**: The local-admin worker processes a corpus generation in the durable order `embed_chunks` → `embed_questions` → `corpus_completeness`. Completion of one stage and enqueueing of its successor occur in one database transaction, so readiness is never leaseable while an embedding population is still running. `WORKER_MODE` is explicit: `local_admin` owns bulk jobs and `railway_public` owns none in Phase 3D.
-- **Phase 3F (Activation Engine)**: Activation and rollback use one transaction: lock `rag_corpora` first, lock all its version rows second, recheck persisted vector provenance/counts/jobs, scope/status, current QA approval, and displayable visual storage, then supersede the previous active row and activate exactly one target. The active-version partial unique index remains the final database invariant. Active retrieval resolves from PostgreSQL per request, so the explicit cache-invalidation seam is currently a no-op rather than a claimed cache action.
+- **Phase 3F (Activation Engine)**: Activation and rollback use one transaction: lock `rag_corpora` first, lock all its version rows second, recheck persisted vector provenance/counts/jobs, scope/status, current QA approval, and displayable visual storage, then supersede the previous active row and activate exactly one target. The active-version partial unique index remains the final database invariant. Retrieval caches only the active version ID and embedding configuration in Redis for five minutes; activation and rollback invalidate the scope key immediately after the database transaction commits. Redis failures fall back safely to PostgreSQL.
 
 ---
 
@@ -131,6 +151,13 @@ Phase 3F supersedes the historical Phase 3C note below: manual JSONL now persist
 ### Token-count contract (Phase 3C)
 
 New JSONL chunks use the configured embedding tokenizer (`BAAI/bge-base-en-v1.5@a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`) without loading the embedding model. The tokenizer method/version is stored in chunk metadata. Existing stored counts are not rewritten by this change; re-ingest a chapter when its historical counts need to be recalculated.
+
+### Paired JSONL + Visual Extracts DOCX import (Phase 3F extension)
+
+- The web BFF alone parses the local-admin upload, validates the Word card/drawing/crop relationship, and privately uploads referenced allowlisted image assets to the configured Google Drive folder. The service does not receive source DOCX bytes.
+- The external JSONL contains no storage key or Drive reference. The BFF creates enriched JSONL only in memory and forwards it to the existing signed `/internal/ingest/jsonl` path. Normal Firestore hierarchy validation remains mandatory, so board/class/subject/chapter must already exist and be active.
+- `rag_paired_imports` records only import and asset hashes, counts, job ID/status, and stable error code. It is RLS-protected and has no public/anon/authenticated grants; it never stores bytes, raw/enriched JSONL, Drive keys/IDs/URLs, or visual source references.
+- This is a local-admin-only workflow, does not auto-activate a corpus, leaves visuals pending review with `llm_decide` as their eventual display policy, and uses no paid LLM, OCR, image-generation, or vision API.
 
 ### Retrieval Settings Granularity (Phase 7A gap)
 

@@ -170,16 +170,29 @@ ALL_TABLES = [
     "rag_chunks",
     "rag_visuals",
     "chunk_expected_questions",
-    "approved_question_bank",
     "solved_papers",
     "provider_attempts",
+    "question_bank_questions",
+    "question_bank_revisions",
+    "question_bank_mcq_options",
+    "question_bank_variations",
+    "question_bank_revision_visuals",
+    "question_bank_revision_citations",
+    "question_bank_imports",
+    "prompt_versions",
+    "cache_generations",
+    "ask_source_policies",
+    "usage_policies",
+    "daily_usage",
+    "usage_reservations",
+    "internal_jti_replay",
 ]
 
 
 @pytest.mark.asyncio
 async def test_rls_deny_by_default_grants():
-    """Verifies that anon and authenticated roles receive 42501 permission denied on all 14 application tables."""
-    # 1. Test with anon role across all 14 tables
+    """Every application table remains inaccessible to client database roles."""
+    # 1. Test with anon role across all tables
     anon_conn = await asyncpg.connect(DB_URL)
     try:
         await anon_conn.execute("SET ROLE anon; SET search_path = public;")
@@ -192,7 +205,7 @@ async def test_rls_deny_by_default_grants():
     finally:
         await anon_conn.close()
 
-    # 2. Test with authenticated role across all 14 tables
+    # 2. Test with authenticated role across all tables
     auth_conn = await asyncpg.connect(DB_URL)
     try:
         await auth_conn.execute("SET ROLE authenticated; SET search_path = public;")

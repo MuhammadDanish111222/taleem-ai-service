@@ -21,7 +21,7 @@ async def readiness_check(authorization: Optional[str] = Header(None)):
     uid = None
     if authorization:
         try:
-            auth_context = verify_internal_jwt(authorization)
+            auth_context = await verify_internal_jwt(authorization)
             uid = auth_context.uid
             logger.info(f"Readiness check called with token for uid: {uid}")
         except Exception as e:

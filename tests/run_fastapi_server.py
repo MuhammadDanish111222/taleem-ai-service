@@ -6,7 +6,7 @@ import sys
 # Ensure app package is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 if len(sys.argv) < 3:
     print("Usage: python run_fastapi_server.py <key_id> <port>", file=sys.stderr)
@@ -23,6 +23,11 @@ patch("app.core.internal_auth.get_redis", return_value=mock_redis).start()
 patch(
     "app.core.internal_auth.get_public_keys", return_value={key_id: public_pem}
 ).start()
+patch(
+    "app.core.internal_auth._record_jti_postgres",
+    new=AsyncMock(return_value=True),
+).start()
+patch("app.core.internal_auth._jti_hash", return_value="a" * 64).start()
 
 os.environ.setdefault("POSTGRES_SERVER", "localhost")
 os.environ.setdefault("POSTGRES_USER", "postgres")

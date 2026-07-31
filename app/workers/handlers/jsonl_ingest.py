@@ -111,6 +111,7 @@ async def handle_jsonl_ingest(
             embedding_config_fingerprint=configuration.fingerprint(),
             normalize_embeddings=configuration.normalize,
             query_instruction=configuration.query_instruction,
+            require_existing_draft_after_activation=True,
         )
         corpus_version_id = str(corpus_ver["id"])
 

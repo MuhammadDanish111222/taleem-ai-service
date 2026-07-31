@@ -1,4 +1,5 @@
 import hashlib
+import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -50,6 +51,30 @@ class RagAdminRequest(BaseModel):
     display_policy: Optional[str] = None
     question: Optional[str] = None
     chapter_id: Optional[str] = None
+
+
+class PairedImportAuditRequest(BaseModel):
+    operation: str
+    import_hash: str
+    board_id: str
+    class_id: str
+    subject_id: str
+    chunk_count: int = 0
+    referenced_visual_count: int = 0
+    unused_visual_count: int = 0
+    asset_hashes: list[str] = Field(default_factory=list)
+    job_id: Optional[str] = None
+    error_code: Optional[str] = None
+
+
+class PairedImportStatusRequest(BaseModel):
+    import_hash: str
+
+
+def _valid_sha256(value: str) -> bool:
+    return len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
 
 
 def _safe_hash(value: Optional[str]) -> Optional[str]:
@@ -190,6 +215,150 @@ async def submit_jsonl_ingest(
         "idempotency_key": job.get("idempotency_key"),
         "stage": job.get("stage"),
     }
+
+
+@router.post("/internal/paired-import/audit")
+async def paired_import_audit(
+    request: PairedImportAuditRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    """Records non-sensitive paired-import state for retry and cleanup auditability."""
+    if not auth_context.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "FORBIDDEN_NOT_ADMIN",
+                "message": "Admin privileges required",
+            },
+        )
+    if (
+        request.operation not in {"started", "assets_uploaded", "queued", "failed"}
+        or len(request.import_hash) != 64
+        or any(character not in "0123456789abcdef" for character in request.import_hash)
+        or not all(
+            value.strip()
+            for value in (request.board_id, request.class_id, request.subject_id)
+        )
+        or any(
+            value < 0
+            for value in (
+                request.chunk_count,
+                request.referenced_visual_count,
+                request.unused_visual_count,
+            )
+        )
+        or any(
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in request.asset_hashes
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "PAIRED_IMPORT_AUDIT_INVALID",
+                "message": "Invalid paired import audit request",
+            },
+        )
+    state = {
+        "started": "validating",
+        "assets_uploaded": "assets_uploaded",
+        "queued": "queued",
+        "failed": "failed",
+    }[request.operation]
+    async with get_db_connection() as conn:
+        await conn.execute(
+            """INSERT INTO rag_paired_imports
+              (import_hash,actor_id,board_id,class_id,subject_id,status,chunk_count,referenced_visual_count,unused_visual_count,asset_hashes,job_id,error_code)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::uuid,$12)
+              ON CONFLICT (import_hash) DO UPDATE SET
+                status=EXCLUDED.status, chunk_count=EXCLUDED.chunk_count,
+                referenced_visual_count=EXCLUDED.referenced_visual_count,
+                unused_visual_count=EXCLUDED.unused_visual_count,
+                asset_hashes=CASE WHEN jsonb_array_length(EXCLUDED.asset_hashes)>0 THEN EXCLUDED.asset_hashes ELSE rag_paired_imports.asset_hashes END,
+                job_id=COALESCE(EXCLUDED.job_id,rag_paired_imports.job_id),
+                error_code=EXCLUDED.error_code, updated_at=NOW();""",
+            request.import_hash,
+            auth_context.uid,
+            request.board_id,
+            request.class_id,
+            request.subject_id,
+            state,
+            request.chunk_count,
+            request.referenced_visual_count,
+            request.unused_visual_count,
+            json.dumps(request.asset_hashes),
+            request.job_id,
+            request.error_code,
+        )
+    return {"status": state}
+
+
+@router.post("/internal/paired-import/status")
+async def paired_import_status(
+    request: PairedImportStatusRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    """Returns only safe retry/deduplication state to the trusted local BFF."""
+    if not auth_context.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "FORBIDDEN_NOT_ADMIN",
+                "message": "Admin privileges required",
+            },
+        )
+    if not _valid_sha256(request.import_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PAIRED_IMPORT_HASH_INVALID",
+                "message": "Invalid paired import hash",
+            },
+        )
+    async with get_db_connection() as conn:
+        row = await conn.fetchrow(
+            """SELECT p.status AS import_status, p.job_id,
+                      j.status AS job_status, j.stage AS job_stage, j.progress
+               FROM rag_paired_imports p
+               LEFT JOIN job_queue j ON j.id = p.job_id
+               WHERE p.import_hash = $1""",
+            request.import_hash,
+        )
+    if not row:
+        return {"found": False}
+    return {
+        "found": True,
+        "import_status": row["import_status"],
+        "job_id": str(row["job_id"]) if row["job_id"] else None,
+        "job_status": row["job_status"],
+        "job_stage": row["job_stage"],
+        "progress": float(row["progress"]) if row["progress"] is not None else None,
+    }
+
+
+@router.post("/internal/paired-import/referenced-assets")
+async def paired_import_referenced_assets(
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    """Trusted-BFF-only reference set used for conservative Drive cleanup."""
+    if not auth_context.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "FORBIDDEN_NOT_ADMIN",
+                "message": "Admin privileges required",
+            },
+        )
+    async with get_db_connection() as conn:
+        rows = await conn.fetch(
+            """SELECT DISTINCT storage_key
+               FROM rag_visuals
+               WHERE storage_provider = 'google_drive'
+                 AND storage_key IS NOT NULL
+                 AND btrim(storage_key) <> ''"""
+        )
+    return {"storage_keys": [row["storage_key"] for row in rows]}
 
 
 @router.post("/internal/admin/rag")

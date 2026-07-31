@@ -38,6 +38,8 @@ class RagRepository:
         embedding_config_fingerprint: str = "",
         normalize_embeddings: bool = True,
         query_instruction: Optional[str] = None,
+        *,
+        require_existing_draft_after_activation: bool = False,
     ) -> Dict[str, Any]:
         """Fetches or creates a single 'building' corpus version for a board/class/subject scope.
 
@@ -93,7 +95,71 @@ class RagRepository:
                 )
             return existing_dict
 
-        # 4. Create new building version (version_no = max + 1)
+        # 4. A subject may be imported chapter-by-chapter before its first
+        # activation. Reopen the latest QA-ready snapshot when its embedding
+        # configuration is unchanged so the next chapter extends that same
+        # subject version instead of creating a chapter-only replacement.
+        qa_ready = await self.conn.fetchrow(
+            """
+            SELECT * FROM rag_corpus_versions
+            WHERE corpus_id = $1::uuid AND status = 'qa_ready'
+            ORDER BY version_no DESC
+            LIMIT 1
+            FOR UPDATE;
+            """,
+            corpus_id,
+        )
+        if qa_ready:
+            qa_ready_dict = dict(qa_ready)
+            requested = (
+                embedding_model,
+                embedding_revision,
+                embedding_dim,
+                embedding_config_fingerprint,
+                normalize_embeddings,
+                query_instruction,
+            )
+            stored = (
+                qa_ready_dict["embedding_model"],
+                qa_ready_dict["embedding_revision"],
+                qa_ready_dict["embedding_dim"],
+                qa_ready_dict.get("embedding_config_fingerprint", ""),
+                qa_ready_dict["normalize_embeddings"],
+                qa_ready_dict["query_instruction"],
+            )
+            if requested == stored:
+                reopened = await self.conn.fetchrow(
+                    """
+                    UPDATE rag_corpus_versions
+                    SET status = 'building'
+                    WHERE id = $1::uuid
+                    RETURNING *;
+                    """,
+                    qa_ready_dict["id"],
+                )
+                await self.conn.execute(
+                    """
+                    UPDATE rag_corpus_qa_approvals
+                    SET invalidated_at = NOW(), invalidated_reason = 'chapter_imported'
+                    WHERE corpus_version_id = $1::uuid
+                      AND invalidated_at IS NULL;
+                    """,
+                    qa_ready_dict["id"],
+                )
+                return dict(reopened)
+
+        if require_existing_draft_after_activation and await self.conn.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM rag_corpus_versions
+                WHERE corpus_id = $1::uuid AND status = 'active'
+            );
+            """,
+            corpus_id,
+        ):
+            raise ValueError("ACTIVE_CORPUS_REQUIRES_EDITABLE_DRAFT")
+
+        # 5. Create new building version (version_no = max + 1)
         max_v_row = await self.conn.fetchrow(
             "SELECT MAX(version_no) as max_v FROM rag_corpus_versions WHERE corpus_id = $1::uuid;",
             corpus_id,
@@ -338,7 +404,7 @@ class RagRepository:
                         storage_provider, storage_key, display_policy, review_status,
                         visual_text_hash
                     ) VALUES ($1::uuid, $2, $3, $4, $5, $6, 'google_drive', $4,
-                              'never', 'pending', $7);
+                              'llm_decide', 'pending', $7);
                     """,
                     chunk_id,
                     visual["visual_id"],
@@ -509,7 +575,7 @@ class RagRepository:
         result = await self.conn.execute(
             """
             UPDATE rag_chunks c
-            SET embedding = $3::vector, embedding_model = $5, embedding_revision = $6,
+            SET embedding = $3::text::vector, embedding_model = $5, embedding_revision = $6,
                 embedding_config_fingerprint = $7, embedding_input_hash = $4,
                 embedding_status = 'embedded', embedding_started_at = COALESCE(embedding_started_at, NOW()),
                 embedding_completed_at = NOW(), embedding_error_code = NULL
@@ -543,7 +609,7 @@ class RagRepository:
         result = await self.conn.execute(
             """
             UPDATE chunk_expected_questions q
-            SET embedding = $3::vector, embedding_model = $5, embedding_revision = $6,
+            SET embedding = $3::text::vector, embedding_model = $5, embedding_revision = $6,
                 embedding_config_fingerprint = $7, embedding_input_hash = $4,
                 embedding_status = 'embedded',
                 embedding_started_at = COALESCE(q.embedding_started_at, NOW()),
@@ -711,7 +777,7 @@ class RagRepository:
         query = """
         SELECT id, document_version_id, corpus_version_id, chunk_index, content,
                chapter_id, topic_no, topic_title, page_start, page_end,
-               (embedding <-> $2::vector) AS distance
+               (embedding <-> $2::text::vector) AS distance
         FROM rag_chunks
         WHERE corpus_version_id = $1::uuid AND embedding IS NOT NULL
         ORDER BY distance ASC
@@ -809,7 +875,7 @@ class RagRepository:
               AND c.embedding_model = cv.embedding_model
               AND c.embedding_revision = cv.embedding_revision
               AND c.embedding_config_fingerprint = cv.embedding_config_fingerprint
-            ORDER BY c.embedding <=> $5::vector ASC, c.id ASC
+            ORDER BY c.embedding <=> $5::text::vector ASC, c.id ASC
             LIMIT $7;
             """,
             board_id,
@@ -847,7 +913,7 @@ class RagRepository:
                 SELECT DISTINCT ON (c.id)
                        c.id::text AS citation_id, c.content, c.chapter_id, c.topic_no,
                        c.topic_title, c.page_start, c.page_end,
-                       q.embedding <=> $5::vector AS best_question_distance
+                       q.embedding <=> $5::text::vector AS best_question_distance
                 FROM chunk_expected_questions q
                 JOIN rag_chunks c ON c.id = q.chunk_id
                 JOIN rag_corpus_versions cv ON cv.id = c.corpus_version_id
@@ -865,7 +931,7 @@ class RagRepository:
                   AND q.embedding_model = cv.embedding_model
                   AND q.embedding_revision = cv.embedding_revision
                   AND q.embedding_config_fingerprint = cv.embedding_config_fingerprint
-                ORDER BY c.id, q.embedding <=> $5::vector ASC, q.id ASC
+                ORDER BY c.id, q.embedding <=> $5::text::vector ASC, q.id ASC
             )
             SELECT citation_id, content, chapter_id, topic_no, topic_title, page_start,
                    page_end,
@@ -928,3 +994,28 @@ class RagRepository:
             allow_named_draft,
         )
         return [dict(row) for row in rows]
+
+    async def get_eligible_retrieval_visuals(
+        self, citation_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Return only safe reviewed metadata; never storage identifiers."""
+        if not citation_ids:
+            return {}
+        rows = await self.conn.fetch(
+            """
+            SELECT v.chunk_id::text AS citation_id, v.visual_id, v.title,
+                   v.description, v.display_policy
+            FROM rag_visuals v
+            WHERE v.chunk_id = ANY($1::uuid[])
+              AND v.review_status = 'approved'
+              AND v.display_policy IN ('always', 'llm_decide')
+            ORDER BY v.chunk_id, v.visual_id
+            """,
+            citation_ids,
+        )
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            item = dict(row)
+            citation_id = item.pop("citation_id")
+            result.setdefault(citation_id, []).append(item)
+        return result

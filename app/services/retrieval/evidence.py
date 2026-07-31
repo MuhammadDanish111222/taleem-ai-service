@@ -35,6 +35,14 @@ class RetrievalScope:
 
 
 @dataclass(frozen=True)
+class RetrievedVisual:
+    visual_id: str
+    title: str
+    description: str
+    display_policy: str
+
+
+@dataclass(frozen=True)
 class Citation:
     """A safe source record for later answer generation; it contains no vectors or storage IDs."""
 
@@ -45,7 +53,7 @@ class Citation:
     topic_title: str | None
     page_start: int | None
     page_end: int | None
-    visuals: tuple[object, ...] = ()
+    visuals: tuple[RetrievedVisual, ...] = ()
 
 
 @dataclass(frozen=True)

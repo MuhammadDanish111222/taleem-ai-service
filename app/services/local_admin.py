@@ -11,6 +11,9 @@ from app.repositories.audit_repository import AuditRepository
 from app.repositories.rag_repository import RagRepository
 from app.services.ingestion.normalization import normalize_expected_question
 from app.services.jobs.queue import JobQueueService
+from app.services.retrieval.active_version_cache import (
+    get_active_corpus_version_cache,
+)
 
 
 class LocalAdminError(ValueError):
@@ -620,13 +623,10 @@ class LocalAdminService:
                     "result": "active",
                 },
             )
-            await self._invalidate_active_retrieval_cache(scope)
-
-    async def _invalidate_active_retrieval_cache(self, scope: dict[str, str]) -> None:
-        """Explicit no-op seam until active retrieval gains a process cache.
-
-        Retrieval resolves the active corpus from PostgreSQL for every request,
-        so no local cache exists to invalidate today.  Keeping this named seam
-        makes an eventual cache integration mandatory rather than implied.
-        """
-        del scope
+        # Invalidate only after the activation transaction commits, so another
+        # request cannot repopulate the previous active version before commit.
+        await get_active_corpus_version_cache().invalidate(
+            scope["board_id"],
+            scope["class_id"],
+            scope["subject_id"],
+        )

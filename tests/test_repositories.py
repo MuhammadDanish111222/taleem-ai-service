@@ -41,6 +41,7 @@ async def test_job_repository_lifecycle(db_conn):
     assert job["job_type"] == "ingest_pipeline"
     assert job["status"] == "queued"
     assert job["progress"] == 0
+    assert job["payload"] == {"resource_id": "res_001"}
 
     # 2. Lease job atomically
     leased = await repo.lease_job("worker_a", ["ingest_pipeline"])
@@ -48,6 +49,7 @@ async def test_job_repository_lifecycle(db_conn):
     assert leased["id"] == job["id"]
     assert leased["status"] == "leased"
     assert leased["locked_by"] == "worker_a"
+    assert leased["payload"] == {"resource_id": "res_001"}
 
     # 3. Update heartbeat
     hb_ok = await repo.update_heartbeat(str(job["id"]), "worker_a")
@@ -60,6 +62,7 @@ async def test_job_repository_lifecycle(db_conn):
     updated_job = await repo.get_job(str(job["id"]))
     assert updated_job["status"] == "running"
     assert float(updated_job["progress"]) == 45.0
+    assert updated_job["payload"] == {"resource_id": "res_001"}
 
     # 5. Complete job
     comp_ok = await repo.complete_job(str(job["id"]))

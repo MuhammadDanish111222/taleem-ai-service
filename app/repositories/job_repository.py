@@ -10,6 +10,18 @@ class JobRepository:
     def __init__(self, conn: asyncpg.Connection):
         self.conn = conn
 
+    @staticmethod
+    def _deserialize_job(row: asyncpg.Record) -> Dict[str, Any]:
+        """Return a stable job DTO regardless of asyncpg JSON codec settings."""
+        job = dict(row)
+        payload = job.get("payload")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            raise ValueError("JOB_PAYLOAD_MUST_BE_AN_OBJECT")
+        job["payload"] = payload
+        return job
+
     async def create_job(
         self,
         job_type: str,
@@ -27,7 +39,7 @@ class JobRepository:
         row = await self.conn.fetchrow(
             query, job_type, idempotency_key, json.dumps(payload), max_attempts
         )
-        return dict(row)
+        return self._deserialize_job(row)
 
     async def lease_job(
         self,
@@ -58,7 +70,7 @@ class JobRepository:
         RETURNING j.*;
         """
         row = await self.conn.fetchrow(query, supported_types, worker_id)
-        return dict(row) if row else None
+        return self._deserialize_job(row) if row else None
 
     async def update_heartbeat(self, job_id: str, worker_id: str) -> bool:
         """Extends worker lease heartbeat. Enforces worker_id lock ownership."""
@@ -286,7 +298,7 @@ class JobRepository:
         row = await self.conn.fetchrow(
             "SELECT * FROM job_queue WHERE id = $1::uuid;", job_id
         )
-        return dict(row) if row else None
+        return self._deserialize_job(row) if row else None
 
     @staticmethod
     def _affected_rows(result: str) -> int:

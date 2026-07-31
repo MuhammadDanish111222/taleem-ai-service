@@ -1,5 +1,5 @@
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -29,7 +29,14 @@ client = TestClient(app)
 
 @pytest.fixture
 def mock_redis():
-    with patch("app.core.internal_auth.get_redis") as mock_get_redis:
+    with (
+        patch("app.core.internal_auth.get_redis") as mock_get_redis,
+        patch(
+            "app.core.internal_auth._record_jti_postgres",
+            new=AsyncMock(return_value=True),
+        ),
+        patch("app.core.internal_auth._jti_hash", return_value="a" * 64),
+    ):
         mock_client = MagicMock()
         mock_client.set.return_value = True
         mock_get_redis.return_value = mock_client
@@ -69,6 +76,39 @@ def test_unsigned_direct_local_admin_request_rejected():
             "class_id": "c",
             "subject_id": "s",
         },
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
+
+
+def test_unsigned_direct_paired_import_audit_rejected():
+    """Paired-import state is internal-only and never accepts an unsigned caller."""
+    response = client.post(
+        "/api/v1/internal/paired-import/audit",
+        json={
+            "operation": "started",
+            "import_hash": "a" * 64,
+            "board_id": "b",
+            "class_id": "c",
+            "subject_id": "s",
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/internal/paired-import/status",
+        "/api/v1/internal/paired-import/referenced-assets",
+    ],
+)
+def test_unsigned_direct_paired_import_maintenance_rejected(path):
+    """Deduplication and cleanup helpers are also trusted-BFF-only."""
+    response = client.post(
+        path,
+        json={"import_hash": "a" * 64} if path.endswith("/status") else {},
     )
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"

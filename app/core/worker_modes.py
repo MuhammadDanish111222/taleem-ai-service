@@ -21,6 +21,7 @@ LOCAL_ADMIN_JOB_TYPES = frozenset(
         "embed_chunks",
         "embed_questions",
         "corpus_completeness",
+        "question_bank_embeddings",
     }
 )
 # Phase 3D intentionally gives Railway no durable job types.  The bounded

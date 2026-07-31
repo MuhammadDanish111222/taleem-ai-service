@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1 import health, internal
+from app.api.v1 import ask, ask_admin, health, internal
 from app.db.pool import close_db_pool, init_db_pool
 
 
@@ -26,3 +26,5 @@ app = FastAPI(
 
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(internal.router, prefix="/api/v1", tags=["internal"])
+app.include_router(ask.router, prefix="/api/v1", tags=["ask"])
+app.include_router(ask_admin.router, prefix="/api/v1", tags=["ask-admin"])

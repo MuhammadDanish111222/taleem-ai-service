@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import asyncpg
 import pytest
+from pgvector.asyncpg import register_vector
 
 from app.core.worker_modes import WorkerMode, owned_job_types
 from app.providers.embeddings.bge import BGEEmbeddingConfiguration
@@ -22,6 +23,7 @@ from app.services.retrieval.fusion import RankedChannelHit, fuse_ranked_hits
 from app.services.retrieval.service import (
     RetrievalConfigurationError,
     RetrievalService,
+    _cached_bge_provider,
 )
 
 
@@ -63,6 +65,17 @@ def _vector(index: int = 0) -> list[float]:
     value = [0.0] * 768
     value[index] = 1.0
     return value
+
+
+def test_default_query_provider_is_reused_within_the_service_process():
+    configuration = BGEEmbeddingConfiguration()
+    _cached_bge_provider.cache_clear()
+    try:
+        assert _cached_bge_provider(configuration) is _cached_bge_provider(
+            configuration
+        )
+    finally:
+        _cached_bge_provider.cache_clear()
 
 
 async def _activate_corpus(
@@ -223,6 +236,38 @@ async def test_three_channels_are_scoped_to_active_version_and_optional_chapter(
     assert {item.citation.chapter_id for item in chapter_result.results} == {
         "chapter-two"
     }
+
+
+@pytest.mark.asyncio
+async def test_retrieval_accepts_text_bound_vectors_with_registered_pgvector_codec(
+    conn,
+):
+    """The FastAPI pool registers pgvector; repository SQL must remain codec-safe."""
+    await register_vector(conn)
+    await _activate_corpus(
+        conn,
+        board="board-codec",
+        suffix="registered-codec",
+        chunks=[
+            _chunk(
+                0,
+                "chapter-one",
+                "matter has mass and occupies space",
+                ["What is matter?"],
+            )
+        ],
+    )
+    service = RetrievalService(
+        conn,
+        lambda config: FakeQueryEmbeddingProvider(config, _vector()),
+    )
+
+    result = await service.retrieve(
+        "What is matter?", RetrievalScope("board-codec", "class-9", "physics")
+    )
+
+    assert result.results
+    assert result.results[0].citation.chapter_id == "chapter-one"
 
 
 @pytest.mark.asyncio

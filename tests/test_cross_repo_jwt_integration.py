@@ -1,6 +1,6 @@
 import os
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -30,7 +30,14 @@ WEB_REPO_DIR = os.path.abspath(
 
 @pytest.fixture
 def mock_redis():
-    with patch("app.core.internal_auth.get_redis") as mock_get_redis:
+    with (
+        patch("app.core.internal_auth.get_redis") as mock_get_redis,
+        patch(
+            "app.core.internal_auth._record_jti_postgres",
+            new=AsyncMock(return_value=True),
+        ),
+        patch("app.core.internal_auth._jti_hash", return_value="a" * 64),
+    ):
         mock_client = MagicMock()
         mock_client.set.return_value = True
         mock_get_redis.return_value = mock_client
@@ -44,7 +51,8 @@ def mock_keys():
         yield mock_get_keys
 
 
-def test_ts_signer_to_python_verifier_integration(mock_keys, mock_redis):
+@pytest.mark.asyncio
+async def test_ts_signer_to_python_verifier_integration(mock_keys, mock_redis):
     """End-to-end integration test: TypeScript signer (taleem-web) -> Python verifier (taleem-ai-service)."""
     if not os.path.exists(WEB_REPO_DIR):
         pytest.skip("taleem-web repository not found at " + WEB_REPO_DIR)
@@ -73,7 +81,7 @@ def test_ts_signer_to_python_verifier_integration(mock_keys, mock_redis):
     assert token.count(".") == 2, f"Invalid JWT string output: {token}"
 
     # Verify token using Python verifier
-    ctx = verify_internal_jwt(f"Bearer {token}")
+    ctx = await verify_internal_jwt(f"Bearer {token}")
 
     assert ctx.uid == "ts-user-999"
     assert ctx.is_admin is True

@@ -27,8 +27,17 @@ class ProviderAttemptRepository:
         latency_ms: int = 0,
         error_code: Optional[str] = None,
         trace_id: Optional[str] = None,
+        retryable: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Records an external provider API attempt."""
+        # Provider adapters use lifecycle names; the database keeps the stable
+        # accounting status vocabulary established in migration 0001.
+        status = {
+            "completed": "success",
+            "failed": (
+                "non_retryable_error" if retryable is False else "retryable_error"
+            ),
+        }.get(status, status)
         query = """
         INSERT INTO provider_attempts (
             ai_request_id, job_id, provider, model, attempt_no,

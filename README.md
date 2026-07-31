@@ -14,6 +14,10 @@ FastAPI AI microservice for the Taleem AI platform (`taleem-ai-service`).
 - **Embeddings and Retrieval (Phases 3D–3E)**: Pinned BGE CLS/L2-normalized `vector(768)` embeddings with per-row provenance and completeness gates; exact scoped dense, expected-question, and lexical retrieval fused with deterministic rank-only RRF.
 - **Local RAG Administration (Phase 3F)**: Local-admin-only corpus inspection, draft QA, targeted expected-question/visual editing, controlled Google Drive image previews, audited activation, and rollback. Railway-public owns no durable bulk embedding jobs.
 - **Cross-Repository Security**: Asymmetric RS256 Internal JWT authentication (`aud: "taleem-ai-service"`, `iss: "taleem-web"`, strict 60s TTL window, mandatory claim validation, Redis JTI replay prevention).
+- **Module 4 Single Ask**: Typed-English `short|long` questions resolve against the approved bank first, then active textbook evidence, and finally the explicitly enabled General AI fallback. Student generation is retained as a pending candidate until a local administrator approves a corrected immutable bank revision.
+- **Continuity and Safety**: Redis provides the normal atomic quota/JTI/cache path, PostgreSQL preserves limits and replay safety during a controlled Redis outage, and identity-scoped request UUIDs make retries idempotent.
+
+Module 4 deployment ownership and verification procedures are documented in [`docs/deployment_runbook.md`](docs/deployment_runbook.md). The repository implementation is locally verified, but Module 4 remains open until the real Supabase, shared Redis, provider, staging, deployment, push, and CI exit gates pass.
 
 ## Getting Started
 
