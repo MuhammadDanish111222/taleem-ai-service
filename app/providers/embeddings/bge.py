@@ -1,9 +1,10 @@
-"""Pinned BGE embedding provider used only by background workers."""
+"""Pinned BGE embedding provider for bulk and on-demand query inference."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 from dataclasses import asdict, dataclass
 from typing import Sequence
@@ -16,6 +17,8 @@ EMBEDDING_DIMENSIONS = 768
 QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 DOCUMENT_INPUT_FORMAT = "topic-heading-approved-visuals-v2"
 QUERY_INPUT_FORMAT = "bge-query-instruction-v1"
+ONNX_MODEL_FILENAME = "onnx/model.onnx"
+SUPPORTED_INFERENCE_RUNTIMES = frozenset({"torch", "onnx"})
 
 
 @dataclass(frozen=True)
@@ -84,10 +87,29 @@ def embedding_input_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-class BGEEmbeddingProvider:
-    """Minimal Transformers/PyTorch implementation using BGE CLS pooling."""
+def resolve_inference_runtime(value: str | None = None) -> str:
+    """Use low-memory ONNX for Railway queries and PyTorch for local bulk work."""
+    selected = (value or os.getenv("BGE_INFERENCE_RUNTIME", "")).strip().lower()
+    if not selected:
+        selected = (
+            "onnx"
+            if os.getenv("WORKER_MODE", "").strip() == "railway_public"
+            else "torch"
+        )
+    if selected not in SUPPORTED_INFERENCE_RUNTIMES:
+        raise ValueError("BGE_INFERENCE_RUNTIME must be 'torch' or 'onnx'.")
+    return selected
 
-    def __init__(self, configuration: BGEEmbeddingConfiguration | None = None):
+
+class BGEEmbeddingProvider:
+    """Pinned BGE CLS-pooling provider with Torch and low-memory ONNX runtimes."""
+
+    def __init__(
+        self,
+        configuration: BGEEmbeddingConfiguration | None = None,
+        *,
+        inference_runtime: str | None = None,
+    ):
         self.configuration = configuration or BGEEmbeddingConfiguration()
         if (
             self.configuration.model != MODEL_NAME
@@ -98,8 +120,10 @@ class BGEEmbeddingProvider:
             raise ValueError(
                 "Phase 3D permits only the pinned BAAI/bge-base-en-v1.5 configuration."
             )
+        self.inference_runtime = resolve_inference_runtime(inference_runtime)
         self._tokenizer = None
         self._model = None
+        self._onnx_session = None
         self._load_lock = threading.Lock()
         self._inference_lock = threading.Lock()
 
@@ -107,42 +131,120 @@ class BGEEmbeddingProvider:
     def configuration_fingerprint(self) -> str:
         return self.configuration.fingerprint()
 
+    def _runtime_is_loaded(self) -> bool:
+        if self.inference_runtime == "onnx":
+            return self._onnx_session is not None and self._tokenizer is not None
+        return self._model is not None and self._tokenizer is not None
+
     def _load(self) -> None:
-        if self._model is not None:
+        if self._runtime_is_loaded():
             return
         with self._load_lock:
-            if self._model is not None:
+            if self._runtime_is_loaded():
                 return
-            try:
-                import torch
-                from transformers import AutoModel, AutoTokenizer
-            except ImportError as exc:
-                raise RuntimeError(
-                    "BGE embedding requires the declared torch and transformers dependencies."
-                ) from exc
-            self._torch = torch
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.configuration.model, revision=self.configuration.revision
-            )
-            self._model = AutoModel.from_pretrained(
-                self.configuration.model, revision=self.configuration.revision
-            )
-            self._model.eval()
+            if self.inference_runtime == "onnx":
+                self._load_onnx()
+                return
+            self._load_torch()
+
+    def _load_torch(self) -> None:
+        try:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "BGE Torch inference requires the declared torch and transformers dependencies."
+            ) from exc
+        self._torch = torch
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.configuration.model, revision=self.configuration.revision
+        )
+        self._model = AutoModel.from_pretrained(
+            self.configuration.model, revision=self.configuration.revision
+        )
+        self._model.eval()
+
+    def _load_onnx(self) -> None:
+        try:
+            import onnxruntime
+            from huggingface_hub import hf_hub_download
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "BGE ONNX inference requires the declared onnxruntime, huggingface-hub, "
+                "and transformers dependencies."
+            ) from exc
+
+        model_path = hf_hub_download(
+            repo_id=self.configuration.model,
+            filename=ONNX_MODEL_FILENAME,
+            revision=self.configuration.revision,
+        )
+        options = onnxruntime.SessionOptions()
+        options.intra_op_num_threads = 1
+        options.inter_op_num_threads = 1
+        options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.configuration.model, revision=self.configuration.revision
+        )
+        self._onnx_session = onnxruntime.InferenceSession(
+            model_path,
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
+        )
+
+    def _embed_torch(self, texts: Sequence[str]) -> list[list[float]]:
+        assert self._tokenizer is not None and self._model is not None
+        batch = self._tokenizer(
+            list(texts), padding=True, truncation=True, return_tensors="pt"
+        )
+        with self._torch.no_grad():
+            model_output = self._model(**batch)
+            vectors = model_output.last_hidden_state[:, 0]
+            vectors = self._torch.nn.functional.normalize(vectors, p=2, dim=1)
+        return [[float(value) for value in row] for row in vectors.tolist()]
+
+    def _embed_onnx(self, texts: Sequence[str]) -> list[list[float]]:
+        try:
+            import numpy
+        except ImportError as exc:
+            raise RuntimeError("BGE ONNX inference requires numpy.") from exc
+
+        assert self._tokenizer is not None and self._onnx_session is not None
+        batch = self._tokenizer(
+            list(texts), padding=True, truncation=True, return_tensors="np"
+        )
+        model_inputs = self._onnx_session.get_inputs()
+        inputs = {
+            item.name: numpy.asarray(batch[item.name], dtype=numpy.int64)
+            for item in model_inputs
+            if item.name in batch
+        }
+        if {item.name for item in model_inputs}.difference(inputs):
+            raise RuntimeError("BGE ONNX tokenizer output does not match model inputs.")
+        outputs = self._onnx_session.get_outputs()
+        output_name = next(
+            (item.name for item in outputs if item.name == "last_hidden_state"),
+            outputs[0].name,
+        )
+        hidden_state = self._onnx_session.run([output_name], inputs)[0]
+        vectors = numpy.asarray(hidden_state[:, 0, :], dtype=numpy.float32)
+        norms = numpy.linalg.norm(vectors, axis=1, keepdims=True)
+        if numpy.any(norms == 0):
+            raise RuntimeError("BGE ONNX returned a zero-length vector.")
+        vectors = vectors / norms
+        return vectors.tolist()
 
     def _embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
         self._load()
-        assert self._tokenizer is not None and self._model is not None
         with self._inference_lock:
-            batch = self._tokenizer(
-                list(texts), padding=True, truncation=True, return_tensors="pt"
+            result = (
+                self._embed_onnx(texts)
+                if self.inference_runtime == "onnx"
+                else self._embed_torch(texts)
             )
-            with self._torch.no_grad():
-                model_output = self._model(**batch)
-                vectors = model_output.last_hidden_state[:, 0]
-                vectors = self._torch.nn.functional.normalize(vectors, p=2, dim=1)
-            result = [[float(value) for value in row] for row in vectors.tolist()]
         self._validate_vectors(result)
         return result
 
