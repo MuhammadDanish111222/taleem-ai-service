@@ -170,6 +170,9 @@ class BGEEmbeddingProvider:
         self._model.eval()
 
     def _load_onnx(self) -> None:
+        # Keep Transformers from importing the installed local-worker Torch
+        # runtime in the memory-constrained Railway public process.
+        os.environ.setdefault("USE_TORCH", "0")
         try:
             import onnxruntime
             from huggingface_hub import hf_hub_download
@@ -189,6 +192,13 @@ class BGEEmbeddingProvider:
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
         options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+        options.enable_cpu_mem_arena = False
+        options.enable_mem_pattern = False
+        options.enable_mem_reuse = True
+        options.graph_optimization_level = (
+            onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        )
+        options.add_session_config_entry("session.disable_prepacking", "1")
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.configuration.model, revision=self.configuration.revision
         )

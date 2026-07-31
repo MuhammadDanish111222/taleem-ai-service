@@ -28,7 +28,7 @@ class _FakeHiddenState:
 
 
 def test_bge_uses_cls_pooling_and_l2_normalizes_768_dimensions():
-    provider = BGEEmbeddingProvider()
+    provider = BGEEmbeddingProvider(inference_runtime="torch")
     vectors = _FakeVectors()
     hidden_state = _FakeHiddenState(vectors)
     normalize_calls = []
