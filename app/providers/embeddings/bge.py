@@ -18,11 +18,12 @@ QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 DOCUMENT_INPUT_FORMAT = "topic-heading-approved-visuals-v2"
 QUERY_INPUT_FORMAT = "bge-query-instruction-v1"
 # Qdrant's Apache-2.0 quantized ONNX port of this exact BGE model keeps the
-# public query path within Railway's 1 GB memory limit. Pin both repository and
-# immutable revision independently from the source-model provenance above.
+# public query path within Railway's 1 GB memory limit. Pin repository, files,
+# and immutable revision independently from the source-model provenance above.
 ONNX_MODEL_REPO = "Qdrant/bge-base-en-v1.5-onnx-Q"
 ONNX_MODEL_REVISION = "738cad1c108e2f23649db9e44b2eab988626493b"
 ONNX_MODEL_FILENAME = "model_optimized.onnx"
+TOKENIZER_FILENAME = "tokenizer.json"
 SUPPORTED_INFERENCE_RUNTIMES = frozenset({"torch", "onnx"})
 
 
@@ -170,23 +171,25 @@ class BGEEmbeddingProvider:
         self._model.eval()
 
     def _load_onnx(self) -> None:
-        # Keep Transformers from importing the installed local-worker Torch
-        # runtime in the memory-constrained Railway public process.
-        os.environ.setdefault("USE_TORCH", "0")
         try:
             import onnxruntime
             from huggingface_hub import hf_hub_download
-            from transformers import AutoTokenizer
+            from tokenizers import Tokenizer
         except ImportError as exc:
             raise RuntimeError(
                 "BGE ONNX inference requires the declared onnxruntime, huggingface-hub, "
-                "and transformers dependencies."
+                "and tokenizers dependencies."
             ) from exc
 
         model_path = hf_hub_download(
             repo_id=ONNX_MODEL_REPO,
             filename=ONNX_MODEL_FILENAME,
             revision=ONNX_MODEL_REVISION,
+        )
+        tokenizer_path = hf_hub_download(
+            repo_id=self.configuration.model,
+            filename=TOKENIZER_FILENAME,
+            revision=self.configuration.revision,
         )
         options = onnxruntime.SessionOptions()
         options.intra_op_num_threads = 1
@@ -199,9 +202,9 @@ class BGEEmbeddingProvider:
             onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC
         )
         options.add_session_config_entry("session.disable_prepacking", "1")
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self.configuration.model, revision=self.configuration.revision
-        )
+        self._tokenizer = Tokenizer.from_file(tokenizer_path)
+        self._tokenizer.enable_truncation(max_length=512)
+        self._tokenizer.enable_padding(pad_id=0, pad_token="[PAD]")
         self._onnx_session = onnxruntime.InferenceSession(
             model_path,
             sess_options=options,
@@ -226,9 +229,12 @@ class BGEEmbeddingProvider:
             raise RuntimeError("BGE ONNX inference requires numpy.") from exc
 
         assert self._tokenizer is not None and self._onnx_session is not None
-        batch = self._tokenizer(
-            list(texts), padding=True, truncation=True, return_tensors="np"
-        )
+        encodings = self._tokenizer.encode_batch(list(texts))
+        batch = {
+            "input_ids": [item.ids for item in encodings],
+            "attention_mask": [item.attention_mask for item in encodings],
+            "token_type_ids": [item.type_ids for item in encodings],
+        }
         model_inputs = self._onnx_session.get_inputs()
         inputs = {
             item.name: numpy.asarray(batch[item.name], dtype=numpy.int64)

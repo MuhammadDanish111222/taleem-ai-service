@@ -1,3 +1,4 @@
+import sys
 from contextlib import nullcontext
 from types import SimpleNamespace
 
@@ -85,12 +86,21 @@ class _FakeOnnxSession:
         return [hidden]
 
 
+class _FakeEncoding:
+    ids = [101, 102]
+    attention_mask = [1, 1]
+    type_ids = [0, 0]
+
+
+class _FakeOnnxTokenizer:
+    def encode_batch(self, texts):
+        assert texts == ["fixture document"]
+        return [_FakeEncoding()]
+
+
 def test_onnx_runtime_uses_cls_pooling_and_l2_normalizes():
     provider = BGEEmbeddingProvider(inference_runtime="onnx")
-    provider._tokenizer = lambda *_args, **_kwargs: {
-        "input_ids": numpy.ones((1, 2), dtype=numpy.int64),
-        "attention_mask": numpy.ones((1, 2), dtype=numpy.int64),
-    }
+    provider._tokenizer = _FakeOnnxTokenizer()
     provider._onnx_session = _FakeOnnxSession()
 
     result = provider._embed(["fixture document"])
@@ -98,3 +108,47 @@ def test_onnx_runtime_uses_cls_pooling_and_l2_normalizes():
     assert len(result) == 1
     assert len(result[0]) == EMBEDDING_DIMENSIONS
     assert sum(value * value for value in result[0]) == pytest.approx(1.0)
+
+
+def test_onnx_loader_does_not_import_torch_or_transformers(monkeypatch, tmp_path):
+    imported = []
+
+    class _Options:
+        def add_session_config_entry(self, *_args):
+            return None
+
+    class _Tokenizer:
+        def enable_truncation(self, **_kwargs):
+            return None
+
+        def enable_padding(self, **_kwargs):
+            return None
+
+    fake_onnx = SimpleNamespace(
+        SessionOptions=_Options,
+        ExecutionMode=SimpleNamespace(ORT_SEQUENTIAL="sequential"),
+        GraphOptimizationLevel=SimpleNamespace(ORT_ENABLE_BASIC="basic"),
+        InferenceSession=lambda *_args, **_kwargs: object(),
+    )
+    fake_hub = SimpleNamespace(
+        hf_hub_download=lambda **kwargs: str(tmp_path / kwargs["filename"])
+    )
+    fake_tokenizers = SimpleNamespace(
+        Tokenizer=SimpleNamespace(from_file=lambda _path: _Tokenizer())
+    )
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_onnx)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setitem(sys.modules, "tokenizers", fake_tokenizers)
+
+    original_import = __import__
+
+    def recording_import(name, *args, **kwargs):
+        imported.append(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", recording_import)
+    provider = BGEEmbeddingProvider(inference_runtime="onnx")
+
+    provider._load_onnx()
+
+    assert not any(name == "torch" or name.startswith("transformers") for name in imported)
