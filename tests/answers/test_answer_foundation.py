@@ -11,6 +11,7 @@ from app.schemas.ask import (
     VisualRefBlock,
 )
 from app.services.answers.context import assemble_context
+from app.services.answers.generate import _normalize_provider_block_aliases
 from app.services.answers.normalization import normalize_question, question_hash
 from app.services.answers.validation import (
     AnswerValidationError,
@@ -71,6 +72,18 @@ def test_context_uses_four_unique_parents_and_character_budget():
         "chunk-3",
     ]
     assert sum(len(item.content) for item in context) == 25
+
+
+def test_provider_paragraph_content_alias_is_narrowly_normalized():
+    assert _normalize_provider_block_aliases(
+        [{"type": "paragraph", "content": "Answer"}]
+    ) == [{"type": "paragraph", "text": "Answer"}]
+    unexpected = {
+        "type": "paragraph",
+        "content": "Answer",
+        "invented": "not allowed",
+    }
+    assert _normalize_provider_block_aliases([unexpected]) == [unexpected]
 
 
 def test_mixed_invalid_citation_rejects_entire_answer():

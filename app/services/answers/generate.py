@@ -60,6 +60,25 @@ from app.services.usage.service import UsageLimitExceeded, UsageService
 _BLOCKS = TypeAdapter(list[AnswerBlock])
 
 
+def _normalize_provider_block_aliases(value: object) -> object:
+    """Normalize one observed DeepSeek alias without weakening strict validation."""
+    if not isinstance(value, list):
+        return value
+    normalized: list[object] = []
+    for item in value:
+        if (
+            isinstance(item, dict)
+            and item.get("type") == "paragraph"
+            and "text" not in item
+            and type(item.get("content")) is str
+            and set(item) == {"type", "content"}
+        ):
+            normalized.append({"type": "paragraph", "text": item["content"]})
+        else:
+            normalized.append(item)
+    return normalized
+
+
 class AskServiceError(RuntimeError):
     def __init__(self, code: str, *, status_code: int = 500):
         self.code = code
@@ -323,7 +342,11 @@ class AskService:
                 trace_id=request_id,
             )
             try:
-                blocks = _BLOCKS.validate_python(generation.document.get("blocks"))
+                blocks = _BLOCKS.validate_python(
+                    _normalize_provider_block_aliases(
+                        generation.document.get("blocks")
+                    )
+                )
                 cited_ids = generation.document.get("cited_chunk_ids", [])
                 if not isinstance(cited_ids, list) or not all(
                     isinstance(item, str) for item in cited_ids
