@@ -2,7 +2,7 @@
 
 ## Module 4 long-answer retrieval and rendering
 
-- Short answers retain the ranked four-chunk context. Long grounded answers use ranked results only as anchors, then load complete ordered chunks for up to three scoped textbook topics from the exact active corpus version. The context remains bounded to twelve chunks and 24,000 characters.
+- Short answers retain the ranked four-chunk context. Long grounded answers use only the top three ranked results as anchors, then load complete ordered chunks for up to three scoped textbook topics from the exact active corpus version. The context remains bounded to twelve chunks and 24,000 characters.
 - Structured output adds validated level-2/level-3 heading and bullet-list blocks alongside paragraphs, equations, and logical visual references. The web renders these as semantic headings and lists.
 - Long grounded answers expose every eligible approved visual attached to the selected topic chunks. Provider-selected placement is allowlist-checked; missing eligible references are appended deterministically. General AI still cannot contain textbook citations or visuals.
 

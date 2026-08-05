@@ -496,7 +496,7 @@ class AskService:
             subject_id=request.subject_id,
             corpus_version_id=corpus_version_id,
             anchor_citation_ids=[
-                item.citation.citation_id for item in ranked_results[:6]
+                item.citation.citation_id for item in ranked_results[:3]
             ],
             max_topics=3,
             max_chunks=12,
