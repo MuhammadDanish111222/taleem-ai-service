@@ -481,6 +481,59 @@ async def test_strong_retrieval_persists_pending_grounded_candidate(conn):
 
 
 @pytest.mark.asyncio
+async def test_strong_but_irrelevant_evidence_becomes_labelled_general_answer(conn):
+    await conn.execute(
+        """UPDATE ask_source_policies SET allow_general=TRUE
+           WHERE class_id IS NULL AND subject_id IS NULL"""
+    )
+    evidence = EvidenceResult(
+        EvidenceStrength.STRONG,
+        (
+            RetrievedEvidence(
+                citation=Citation(
+                    citation_id="chunk-1",
+                    content="Matter can be solid, liquid, or gas.",
+                    chapter_id="chapter-1",
+                    topic_no="1.1",
+                    topic_title="Matter",
+                    page_start=4,
+                    page_end=4,
+                ),
+                fused_rank=1,
+                contributions=(
+                    ChannelContribution(RetrievalChannel.DENSE, 1),
+                    ChannelContribution(RetrievalChannel.EXPECTED_QUESTION, 1),
+                ),
+            ),
+        ),
+        "strong",
+    )
+    prompts = FakePrompts()
+    result = await AskService(
+        conn,
+        retrieval=FakeRetrieval(evidence),
+        provider=FakeProvider(
+            {
+                "blocks": [{"type": "paragraph", "text": "Tokyo is the capital."}],
+                "cited_chunk_ids": [],
+            }
+        ),
+        usage=FakeUsage(),
+        prompt_service=prompts,
+    ).ask(
+        request(question="What is the capital of Japan?"),
+        uid="student",
+        tier=AccountTier.ANONYMOUS,
+    )
+
+    assert result.answer_source == AnswerSource.GENERAL_KNOWLEDGE
+    assert result.general_ai_label
+    assert result.citations == []
+    assert result.visuals == []
+    assert prompts.keys == [PromptKey.ASK_GROUNDED]
+
+
+@pytest.mark.asyncio
 async def test_weak_retrieval_general_fallback_is_labelled_and_reference_free(conn):
     await conn.execute(
         """UPDATE ask_source_policies SET allow_general=TRUE

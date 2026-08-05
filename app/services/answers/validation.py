@@ -99,6 +99,8 @@ def validate_generated_answer(
         citation_id_list or referenced_visual_ids
     ):
         raise AnswerValidationError("GENERAL_ANSWER_HAS_TEXTBOOK_REFERENCES")
+    if source == AnswerSource.SYLLABUS_GROUNDED and not citation_id_list:
+        raise AnswerValidationError("GROUNDED_ANSWER_HAS_NO_CITATION")
 
     selected_visuals = tuple(
         allowed_visuals[visual_id] for visual_id in referenced_visual_ids

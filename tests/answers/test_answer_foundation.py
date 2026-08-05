@@ -144,6 +144,17 @@ def test_general_answer_forbids_citations_and_visuals():
         )
 
 
+def test_grounded_answer_requires_at_least_one_verified_citation():
+    with pytest.raises(AnswerValidationError, match="GROUNDED_ANSWER_HAS_NO_CITATION"):
+        validate_generated_answer(
+            source=AnswerSource.SYLLABUS_GROUNDED,
+            blocks=[ParagraphBlock(type="paragraph", text="Answer")],
+            citation_ids=[],
+            allowed_citations={},
+            allowed_visuals={},
+        )
+
+
 def test_always_visual_is_backend_guaranteed_and_unsafe_latex_rejected():
     visual = VisualDto(
         visual_id="Visual_1",
@@ -155,8 +166,8 @@ def test_always_visual_is_backend_guaranteed_and_unsafe_latex_rejected():
     result = validate_generated_answer(
         source=AnswerSource.SYLLABUS_GROUNDED,
         blocks=[ParagraphBlock(type="paragraph", text="Answer")],
-        citation_ids=[],
-        allowed_citations={},
+        citation_ids=["chunk-1"],
+        allowed_citations={"chunk-1": CitationDto(citation_id="chunk-1")},
         allowed_visuals={visual.visual_id: visual},
     )
     assert result.blocks[-1] == VisualRefBlock(type="visual_ref", visual_id="Visual_1")

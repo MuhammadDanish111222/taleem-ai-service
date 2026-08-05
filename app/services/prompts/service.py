@@ -34,10 +34,16 @@ not emit answer_source, citations, confidence, or explanatory wrapper fields.
 """
 
 _GROUNDED_SOURCE_RULES = """\
-Use only the supplied textbook evidence. JSON must contain a blocks array and a \
-cited_chunk_ids array. Blocks may be paragraph, equation, or visual_ref. Every \
-cited chunk and visual_ref must use an allowed identifier exactly. If evidence \
-is insufficient, return an explicit no-answer status instead of inventing facts.
+Use the supplied textbook evidence first. JSON must contain a blocks array and a \
+cited_chunk_ids array. Blocks may be paragraph, equation, or visual_ref. When the \
+answer is supported by the evidence, cite at least one supporting allowed chunk \
+identifier. Every cited chunk and visual_ref must use an allowed identifier \
+exactly. When the evidence does not support the answer and allow_general is true, \
+answer from general knowledge with an empty cited_chunk_ids array, do not emit a \
+visual_ref, and do not claim textbook verification. When the evidence does not \
+support the answer and allow_general is false, return empty blocks and an empty \
+cited_chunk_ids array. Never attach an unrelated textbook citation merely to make \
+an answer appear grounded.
 """
 
 _GENERAL_SOURCE_RULES = """\

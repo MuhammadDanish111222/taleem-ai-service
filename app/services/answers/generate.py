@@ -52,7 +52,7 @@ from app.services.prompts.models import (
     PromptScope,
 )
 from app.services.prompts.service import PromptService
-from app.services.retrieval.evidence import EvidenceStrength, RetrievalScope
+from app.services.retrieval.evidence import RetrievalScope
 from app.services.retrieval.service import RetrievalService
 from app.services.usage.models import AccountTier, UsageReservation
 from app.services.usage.service import UsageLimitExceeded, UsageService
@@ -249,7 +249,7 @@ class AskService:
                 request.board_id, request.class_id, request.subject_id
             )
 
-            if evidence.strength == EvidenceStrength.STRONG:
+            if evidence.results:
                 prompt_key = PromptKey.ASK_GROUNDED
                 context = assemble_context(evidence.results)
                 allowed_citations = {
@@ -283,6 +283,7 @@ class AskService:
                         "question": request.question,
                         "answer_mode": request.answer_mode.value,
                         "answer_style": request.answer_style.value,
+                        "allow_general": bool(source_policy["allow_general"]),
                         "evidence": [asdict(item) for item in context],
                         "allowed_visuals": [
                             visual.model_dump() for visual in allowed_visuals.values()
@@ -343,9 +344,7 @@ class AskService:
             )
             try:
                 blocks = _BLOCKS.validate_python(
-                    _normalize_provider_block_aliases(
-                        generation.document.get("blocks")
-                    )
+                    _normalize_provider_block_aliases(generation.document.get("blocks"))
                 )
                 cited_ids = generation.document.get("cited_chunk_ids", [])
                 if not isinstance(cited_ids, list) or not all(
@@ -354,6 +353,40 @@ class AskService:
                     raise AnswerValidationError("ANSWER_CITATIONS_INVALID")
             except (ValidationError, AnswerValidationError, AttributeError) as exc:
                 raise AskServiceError("PROVIDER_RESPONSE_INVALID") from exc
+
+            prompt_version = f"{resolved.record.id}:{resolved.record.version}"
+            if not blocks and not cited_ids:
+                async with self._conn.transaction():
+                    await self._asks.no_answer(
+                        str(ai_request["id"]),
+                        error_code="TEXTBOOK_EVIDENCE_INSUFFICIENT",
+                        prompt_version=prompt_version,
+                    )
+                    await self._usage.commit(self._conn, request_id, safe_uid)
+                return self._no_answer_response(
+                    request,
+                    reservation,
+                    error_code="TEXTBOOK_EVIDENCE_INSUFFICIENT",
+                )
+
+            if source == AnswerSource.SYLLABUS_GROUNDED and not cited_ids:
+                if not source_policy["allow_general"]:
+                    async with self._conn.transaction():
+                        await self._asks.no_answer(
+                            str(ai_request["id"]),
+                            error_code="GENERAL_AI_DISABLED",
+                            prompt_version=prompt_version,
+                        )
+                        await self._usage.commit(self._conn, request_id, safe_uid)
+                    return self._no_answer_response(
+                        request,
+                        reservation,
+                        error_code="GENERAL_AI_DISABLED",
+                    )
+                source = AnswerSource.GENERAL_KNOWLEDGE
+                allowed_citations = {}
+                allowed_visuals = {}
+
             validated = validate_generated_answer(
                 source=source,
                 blocks=blocks,
@@ -361,7 +394,6 @@ class AskService:
                 allowed_citations=allowed_citations,
                 allowed_visuals=allowed_visuals,
             )
-            prompt_version = f"{resolved.record.id}:{resolved.record.version}"
             async with self._conn.transaction():
                 await self._asks.complete(
                     ai_request_id=str(ai_request["id"]),

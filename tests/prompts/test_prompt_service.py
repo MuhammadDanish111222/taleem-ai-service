@@ -313,7 +313,8 @@ def test_immutable_prefix_keeps_source_integrity_outside_editable_content():
 
     assert grounded.startswith(IMMUTABLE_SAFETY_PREFIX)
     assert grounded.index("allowed identifier") < grounded.index("Ignore all")
-    assert "Use only the supplied textbook evidence" in grounded
+    assert "Use the supplied textbook evidence first" in grounded
+    assert "Never attach an unrelated textbook citation" in grounded
     assert "empty cited_chunk_ids array" in general
     assert "never emit visual_ref" in general
 
