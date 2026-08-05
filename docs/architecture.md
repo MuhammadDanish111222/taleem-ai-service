@@ -11,6 +11,7 @@ This document provides the definitive architectural design, database schema spec
 - Editable prompts are PostgreSQL-versioned and resolve board+class+subject, class+subject, subject, then global. Immutable source/safety rules remain in code. Activation/rollback and the shared prompt-cache generation change in one database transaction.
 - Redis performs atomic quota reservation with PostgreSQL as the authoritative mirror/fallback. Request UUIDs are identity-scoped. Pakistan business days reset at midnight in `Asia/Karachi`; PostgreSQL also mirrors HMAC-hashed internal JWT JTIs so Redis outages do not disable replay protection.
 - Generated output is validated as a whole. Invented or mixed-invalid citations/visuals fail; General AI has neither; `always` visuals are appended deterministically. Provider input contains text plus approved metadata only, never image bytes, storage identifiers, URLs, or raw vectors.
+- Retrieval strength controls evidence ordering, not answer-source truth. Non-empty strong or weak evidence is offered to the grounded prompt, but the backend requires a verified citation before assigning `syllabus_grounded`. An uncited non-empty answer is relabelled `general_knowledge` only when the scoped policy permits fallback; empty output becomes `no_answer`.
 
 ## Module 4 Run 2: Operational Ask architecture
 

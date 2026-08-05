@@ -23,6 +23,8 @@ This document logs significant architectural decisions and changes made for the 
   - A visual is served only when its logical ID resolves uniquely to a reviewed approved/grounded link. Provider output cannot introduce a URL, Drive ID, storage key, or arbitrary visual identifier.
 - **Decision:** Separate implementation completion from the real exit gate.
   - Passing disposable-stack and local browser tests does not authorize a real migration, provider charge, deployment, retention deletion, commit, or completion claim. Module 4 stays open until those real checks are directly verified.
+- **Decision:** Retrieval rank agreement is not proof that an answer is textbook-grounded.
+  - Strong and weak non-empty retrieval results may be supplied as bounded evidence, but a generated answer is stored and rendered as `syllabus_grounded` only when it cites at least one allowed retrieved chunk. A reference-free answer becomes clearly labelled General AI only when the typed policy allows it; otherwise the request ends in an honest no-answer state.
 
 ## Phase 0: Framework & Architecture
 - **Decision:** Python + FastAPI over Node.js for AI tasks.

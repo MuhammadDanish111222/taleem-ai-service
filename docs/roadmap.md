@@ -3,7 +3,7 @@
 ## Module 4: Ask a Question
 
 - [x] Run 1: backend/BFF contracts, quota fallback, prompt/provider boundary, approved bank, generation/candidate orchestration, validation, admin service operations, and automated verification.
-- [ ] Run 2 exit gate: local student/admin/service implementation and disposable-stack verification are complete. Real Supabase migration, shared Redis/DeepSeek configuration, staging evidence, deployment, push, and green CI remain required before this item may be checked.
+- [ ] Run 2 exit gate: implementation, real Supabase/Upstash/DeepSeek configuration, approved/grounded/general staging, deployment, push, and CI are verified. Only the owner-provided public WhatsApp support setting remains before this item may be checked.
 
 - [x] Phase 0: Initial Repository Setup (Python, FastAPI, UV)
 - [x] Phase 3A: RAG Foundation & Database Schema (PostgreSQL 17, pgvector, Asyncpg, RLS, Durable Jobs)
