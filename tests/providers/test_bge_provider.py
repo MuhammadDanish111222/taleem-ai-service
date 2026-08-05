@@ -73,7 +73,10 @@ def test_explicit_runtime_override_is_validated(monkeypatch):
 
 class _FakeOnnxSession:
     def get_inputs(self):
-        return [SimpleNamespace(name="input_ids"), SimpleNamespace(name="attention_mask")]
+        return [
+            SimpleNamespace(name="input_ids"),
+            SimpleNamespace(name="attention_mask"),
+        ]
 
     def get_outputs(self):
         return [SimpleNamespace(name="last_hidden_state")]
@@ -151,4 +154,6 @@ def test_onnx_loader_does_not_import_torch_or_transformers(monkeypatch, tmp_path
 
     provider._load_onnx()
 
-    assert not any(name == "torch" or name.startswith("transformers") for name in imported)
+    assert not any(
+        name == "torch" or name.startswith("transformers") for name in imported
+    )
