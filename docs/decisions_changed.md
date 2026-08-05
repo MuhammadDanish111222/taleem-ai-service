@@ -2,8 +2,8 @@
 
 ## Module 4 long-answer decisions
 
-- **Decision:** Complete a bounded textbook topic instead of treating one retrieved chunk as the whole long answer.
-  - Long mode expands only the top three ranked anchors by chapter and stable `topic_no`, preserving chunk order and repeating active corpus/scope predicates in SQL. Expansion is capped at three topics, twelve chunks, and 24,000 characters so broad questions remain bounded without pulling lower-ranked adjacent textbook topics into focused answers. Short mode is unchanged.
+- **Decision:** Send complete, strongly selected textbook subtopics instead of an arbitrary list of chunks.
+  - Short mode sends only the complete highest-ranked subtopic. Long mode considers the top five retrieval results, always sends the complete highest-ranked subtopic, and admits at most one additional complete subtopic only when it independently satisfies multi-channel top-three support or occurs at least twice in that window. Expansion preserves chapter and stable `topic_no`, repeats active corpus/scope predicates in SQL, and remains capped at two topics, twelve chunks, and 24,000 characters. A lower-ranked neighbouring topic cannot enter merely because unused chunk capacity remains.
 - **Decision:** Treat optional textbook enrichment as learnable content, not disposable retrieval noise.
   - Same-topic examples, applications, and side facts supplied to the model must be retained under the explicit heading `Additional textbook knowledge (optional)`. Essential answer content may never be labelled optional.
 - **Decision:** Return all eligible visuals for selected long-answer topics.

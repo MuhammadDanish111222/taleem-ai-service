@@ -39,12 +39,13 @@ not emit answer_source, citations, confidence, or explanatory wrapper fields.
 _GROUNDED_SOURCE_RULES = """\
 Use the supplied textbook evidence first. JSON must contain a blocks array and a \
 cited_chunk_ids array. Blocks may be paragraph, heading, bullet_list, equation, \
-or visual_ref. For long answers, cover the complete supplied textbook topic: \
+or visual_ref. For long answers, cover the complete supplied textbook topic or \
+topics: \
 organize the core exam answer with meaningful headings and bullet lists, then \
 place relevant examples, applications, side facts, or enrichment that are in \
-the supplied topic but not essential to the direct answer under the exact \
+the supplied selected topic or topics but not essential to the direct answer under the exact \
 heading "Additional textbook knowledge (optional)". Do not omit such supplied \
-topic material and do not label an essential answer point optional. Insert each \
+selected-topic material and do not label an essential answer point optional. Insert each \
 useful allowed visual_ref immediately after the section it supports. For short \
 answers, remain concise and include only directly relevant textbook points. When the \
 answer is supported by the evidence, cite at least one supporting allowed chunk \

@@ -63,6 +63,8 @@ from app.services.usage.models import AccountTier, UsageReservation
 from app.services.usage.service import UsageLimitExceeded, UsageService
 
 _BLOCKS = TypeAdapter(list[AnswerBlock])
+_TOPIC_ANCHOR_WINDOW = 5
+_MAX_COMPLETE_TOPIC_CHUNKS = 12
 
 
 def _normalize_provider_block_aliases(value: object) -> object:
@@ -82,6 +84,64 @@ def _normalize_provider_block_aliases(value: object) -> object:
         else:
             normalized.append(item)
     return normalized
+
+
+def _topic_key(result: RetrievedEvidence) -> tuple[str | None, str, str]:
+    """Return the stable ingestion identity for one retrieved textbook topic."""
+
+    citation = result.citation
+    if citation.topic_no:
+        return (citation.chapter_id, "number", citation.topic_no)
+    if citation.topic_title:
+        return (citation.chapter_id, "title", citation.topic_title)
+    return (citation.chapter_id, "chunk", citation.citation_id)
+
+
+def _has_independent_strong_support(result: RetrievedEvidence) -> bool:
+    """Use the approved multi-channel rule for a possible second topic."""
+
+    return (
+        len(
+            {
+                contribution.channel
+                for contribution in result.contributions
+                if contribution.rank <= 3
+            }
+        )
+        >= 2
+    )
+
+
+def _select_topic_anchor_ids(
+    ranked_results: tuple[RetrievedEvidence, ...], answer_mode: AnswerMode
+) -> list[str]:
+    """Select one topic for short answers and at most two for long answers.
+
+    The first ranked topic is always selected. A second long-answer topic must
+    be independently strong or appear more than once inside the top-five
+    retrieval window; merely being a lower-ranked neighbour is not enough.
+    """
+
+    candidates = ranked_results[:_TOPIC_ANCHOR_WINDOW]
+    if not candidates:
+        return []
+    selected = [candidates[0].citation.citation_id]
+    if answer_mode is AnswerMode.SHORT:
+        return selected
+
+    first_topic = _topic_key(candidates[0])
+    topic_counts: dict[tuple[str | None, str, str], int] = {}
+    for candidate in candidates:
+        key = _topic_key(candidate)
+        topic_counts[key] = topic_counts.get(key, 0) + 1
+    for candidate in candidates[1:]:
+        key = _topic_key(candidate)
+        if key == first_topic:
+            continue
+        if topic_counts[key] >= 2 or _has_independent_strong_support(candidate):
+            selected.append(candidate.citation.citation_id)
+            break
+    return selected
 
 
 class AskServiceError(RuntimeError):
@@ -256,16 +316,16 @@ class AskService:
 
             if evidence.results:
                 prompt_key = PromptKey.ASK_GROUNDED
-                generation_results = evidence.results[:4]
-                if request.answer_mode == AnswerMode.LONG and active_version:
-                    generation_results = await self._expand_long_answer_topics(
+                generation_results = evidence.results[:1]
+                if active_version:
+                    generation_results = await self._expand_answer_topics(
                         request=request,
                         corpus_version_id=str(active_version["id"]),
                         ranked_results=evidence.results,
                     )
                 context = assemble_context(
                     generation_results,
-                    max_chunks=12 if request.answer_mode == AnswerMode.LONG else 4,
+                    max_chunks=_MAX_COMPLETE_TOPIC_CHUNKS,
                     max_characters=(
                         24000 if request.answer_mode == AnswerMode.LONG else 12000
                     ),
@@ -481,28 +541,30 @@ class AskService:
                 raise AskServiceError(str(exc), status_code=502) from None
             raise AskServiceError("ASK_INTERNAL_FAILURE", status_code=500) from None
 
-    async def _expand_long_answer_topics(
+    async def _expand_answer_topics(
         self,
         *,
         request: AskRequest,
         corpus_version_id: str,
         ranked_results: tuple[RetrievedEvidence, ...],
     ) -> tuple[RetrievedEvidence, ...]:
-        """Expand top-ranked anchors to complete scoped textbook topics."""
+        """Expand the selected ranked anchors to complete scoped topics."""
         repo = RagRepository(self._conn)
+        anchor_ids = _select_topic_anchor_ids(ranked_results, request.answer_mode)
         rows = await repo.get_active_topic_chunks(
             board_id=request.board_id,
             class_id=request.class_id,
             subject_id=request.subject_id,
             corpus_version_id=corpus_version_id,
-            anchor_citation_ids=[
-                item.citation.citation_id for item in ranked_results[:3]
-            ],
-            max_topics=3,
-            max_chunks=12,
+            anchor_citation_ids=anchor_ids,
+            max_topics=2 if request.answer_mode is AnswerMode.LONG else 1,
+            max_chunks=_MAX_COMPLETE_TOPIC_CHUNKS,
         )
         if not rows:
-            return ranked_results[:4]
+            selected = set(anchor_ids)
+            return tuple(
+                item for item in ranked_results if item.citation.citation_id in selected
+            )
         visual_map = await repo.get_eligible_retrieval_visuals(
             [row["citation_id"] for row in rows]
         )

@@ -2,10 +2,10 @@
 
 ## Module 4 — Long-answer completeness hardening
 
-- **Implemented:** Long grounded answers expand the top scoped retrieval anchors into complete ordered textbook topics (maximum three topics, twelve chunks, and 24,000 context characters). Short answers retain the existing four-chunk bounded path.
+- **Implemented:** Short grounded answers now send one complete highest-ranked subtopic. Long answers send that complete subtopic plus at most one independently supported second subtopic from a five-result anchor window. Both are capped at twelve chunks; short and long character limits remain 12,000 and 24,000 respectively.
 - **Structure and enrichment:** The strict answer contract now supports semantic headings and bullet lists. Supplied same-topic enrichment is retained under `Additional textbook knowledge (optional)` while essential answer points cannot be demoted to optional material.
 - **Visuals:** Every approved `always` or `llm_decide` visual linked to the selected long-answer topics is returned. DeepSeek still receives metadata only, and missing visual references are appended deterministically after allowlist validation.
-- **Verification:** Full service suite: `181 passed`, `3` intentionally gated tests skipped. Full Firestore-emulator web suite: `296 passed`, `1` intentionally gated test skipped. Ruff, focused long-answer tests, ESLint, TypeScript, production build, client-bundle secret scan, and both repository diff checks pass.
+- **Verification:** Full service suite: `185 passed`, `3` intentionally gated tests skipped. The topic-aware focused database suite passes `35` tests. The most recent full Firestore-emulator web suite remains `296 passed`, `1` intentionally gated test skipped; no web code changed in this update. Ruff, focused retrieval/answer tests, and service diff checks pass.
 
 This document serves as a persistent record of the progress made on the Python-based AI microservice.
 

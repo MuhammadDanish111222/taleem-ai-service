@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.schemas.ask import (
+    AnswerMode,
     AnswerSource,
     BulletListBlock,
     CitationDto,
@@ -13,7 +14,10 @@ from app.schemas.ask import (
     VisualRefBlock,
 )
 from app.services.answers.context import assemble_context
-from app.services.answers.generate import _normalize_provider_block_aliases
+from app.services.answers.generate import (
+    _normalize_provider_block_aliases,
+    _select_topic_anchor_ids,
+)
 from app.services.answers.normalization import normalize_question, question_hash
 from app.services.answers.validation import (
     AnswerValidationError,
@@ -74,6 +78,145 @@ def test_context_uses_four_unique_parents_and_character_budget():
         "chunk-3",
     ]
     assert sum(len(item.content) for item in context) == 25
+
+
+def _topic_evidence(
+    citation_id: str,
+    topic_no: str,
+    rank: int,
+    contributions: tuple[ChannelContribution, ...],
+) -> RetrievedEvidence:
+    return RetrievedEvidence(
+        citation=Citation(
+            citation_id=citation_id,
+            content=f"Content for {topic_no}",
+            chapter_id="chapter-1",
+            topic_no=topic_no,
+            topic_title=f"Topic {topic_no}",
+            page_start=None,
+            page_end=None,
+        ),
+        fused_rank=rank,
+        contributions=contributions,
+    )
+
+
+def test_short_topic_selection_uses_only_the_highest_ranked_subtopic():
+    results = (
+        _topic_evidence(
+            "chunk-1",
+            "1.1",
+            1,
+            (ChannelContribution(RetrievalChannel.DENSE, 1),),
+        ),
+        _topic_evidence(
+            "chunk-2",
+            "1.2",
+            2,
+            (
+                ChannelContribution(RetrievalChannel.DENSE, 2),
+                ChannelContribution(RetrievalChannel.LEXICAL, 1),
+            ),
+        ),
+    )
+
+    assert _select_topic_anchor_ids(results, AnswerMode.SHORT) == ["chunk-1"]
+
+
+def test_long_topic_selection_rejects_a_weak_neighbouring_subtopic():
+    results = (
+        _topic_evidence(
+            "chunk-1",
+            "1.1",
+            1,
+            (
+                ChannelContribution(RetrievalChannel.DENSE, 1),
+                ChannelContribution(RetrievalChannel.LEXICAL, 1),
+            ),
+        ),
+        _topic_evidence(
+            "chunk-2",
+            "1.2",
+            2,
+            (ChannelContribution(RetrievalChannel.DENSE, 4),),
+        ),
+    )
+
+    assert _select_topic_anchor_ids(results, AnswerMode.LONG) == ["chunk-1"]
+
+
+def test_long_topic_selection_accepts_one_independently_supported_second_topic():
+    results = (
+        _topic_evidence(
+            "chunk-1",
+            "1.1",
+            1,
+            (
+                ChannelContribution(RetrievalChannel.DENSE, 1),
+                ChannelContribution(RetrievalChannel.LEXICAL, 1),
+            ),
+        ),
+        _topic_evidence(
+            "chunk-2",
+            "1.2",
+            2,
+            (
+                ChannelContribution(RetrievalChannel.DENSE, 2),
+                ChannelContribution(RetrievalChannel.EXPECTED_QUESTION, 3),
+            ),
+        ),
+        _topic_evidence(
+            "chunk-3",
+            "1.3",
+            3,
+            (
+                ChannelContribution(RetrievalChannel.DENSE, 3),
+                ChannelContribution(RetrievalChannel.LEXICAL, 2),
+            ),
+        ),
+    )
+
+    assert _select_topic_anchor_ids(results, AnswerMode.LONG) == [
+        "chunk-1",
+        "chunk-2",
+    ]
+
+
+def test_long_topic_selection_accepts_a_repeated_second_topic_but_only_two_topics():
+    results = (
+        _topic_evidence(
+            "chunk-1",
+            "1.1",
+            1,
+            (ChannelContribution(RetrievalChannel.DENSE, 1),),
+        ),
+        _topic_evidence(
+            "chunk-2",
+            "1.2",
+            2,
+            (ChannelContribution(RetrievalChannel.DENSE, 4),),
+        ),
+        _topic_evidence(
+            "chunk-3",
+            "1.2",
+            3,
+            (ChannelContribution(RetrievalChannel.LEXICAL, 5),),
+        ),
+        _topic_evidence(
+            "chunk-4",
+            "1.3",
+            4,
+            (
+                ChannelContribution(RetrievalChannel.DENSE, 2),
+                ChannelContribution(RetrievalChannel.LEXICAL, 3),
+            ),
+        ),
+    )
+
+    assert _select_topic_anchor_ids(results, AnswerMode.LONG) == [
+        "chunk-1",
+        "chunk-2",
+    ]
 
 
 def test_provider_paragraph_content_alias_is_narrowly_normalized():
