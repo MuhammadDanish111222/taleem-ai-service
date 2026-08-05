@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -149,9 +150,11 @@ class FakeProvider:
         }
         self.error = error
         self.calls = 0
+        self.last_call = None
 
-    async def generate(self, **_kwargs):
+    async def generate(self, **kwargs):
         self.calls += 1
+        self.last_call = kwargs
         if self.error:
             raise self.error
         return StructuredGeneration(
@@ -478,6 +481,162 @@ async def test_strong_retrieval_persists_pending_grounded_candidate(conn):
     assert replay.blocks == result.blocks
     assert replay.citations == result.citations
     assert provider.calls == retrieval.calls == usage.reserved == 1
+
+
+@pytest.mark.asyncio
+async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
+    suffix = uuid.uuid4().hex
+    configuration = BGEEmbeddingConfiguration()
+    rag = RagRepository(conn)
+    corpus = await rag.get_or_create_corpus(
+        board_id="punjab",
+        class_id="class-9",
+        subject_id="physics",
+    )
+    version = await rag.create_corpus_version(
+        str(corpus["id"]),
+        5000 + int(suffix[:4], 16),
+        configuration.model,
+        configuration.revision,
+        configuration.dimensions,
+        embedding_config_fingerprint=configuration.fingerprint(),
+        normalize_embeddings=configuration.normalize,
+        query_instruction=configuration.query_instruction,
+    )
+    document = await rag.create_document_version(
+        str(version["id"]),
+        f"long-topic-{suffix}",
+        "v1",
+        "test",
+        "Split topic",
+    )
+    chunks = await rag.replace_chapter_chunks(
+        str(version["id"]),
+        str(document["id"]),
+        [
+            {
+                "chapter_id": "chapter-1",
+                "topic_no": "1.2",
+                "topic_title": f"States of Matter — Part {index + 1}",
+                "chunk_order": index,
+                "chunk_text": text,
+                "content_type": "explanation",
+                "content_hash": f"{suffix}{index}",
+                "language": "en",
+                "token_count": 12,
+                "metadata": {},
+                "expected_questions": [],
+                "visuals": (
+                    [
+                        {
+                            "visual_id": f"Visual_{index + 1}",
+                            "visual_type": "diagram",
+                            "title": f"Topic visual {index + 1}",
+                            "description": "Reviewed visual from the complete topic",
+                            "storage_key": f"drive-{suffix}-{index}",
+                        }
+                    ]
+                    if index != 1
+                    else []
+                ),
+            }
+            for index, text in enumerate(
+                (
+                    "Matter commonly exists as solid, liquid, gas and plasma.",
+                    "Solids, liquids and gases differ in particle arrangement.",
+                    "Intermediate states include supercritical fluids, liquid crystals and graphene. Exotic states include Bose-Einstein condensates.",
+                )
+            )
+        ],
+    )
+    await conn.execute(
+        """UPDATE rag_visuals SET review_status='approved'
+           WHERE chunk_id=ANY($1::uuid[])""",
+        [chunk["id"] for chunk in chunks],
+    )
+    await conn.execute(
+        """UPDATE rag_chunks SET
+             embedding=('[' || array_to_string(array_fill(0.0::float8,ARRAY[768]),',') || ']')::vector,
+             embedding_status='embedded',embedding_model=$2,
+             embedding_revision=$3,embedding_config_fingerprint=$4
+           WHERE corpus_version_id=$1::uuid""",
+        version["id"],
+        configuration.model,
+        configuration.revision,
+        configuration.fingerprint(),
+    )
+    await conn.execute(
+        """UPDATE rag_corpus_versions SET expected_chunk_count=3,
+             embedded_chunk_count=3,expected_question_count=0,
+             embedded_question_count=0,status='qa_ready'
+           WHERE id=$1::uuid""",
+        version["id"],
+    )
+    await conn.execute(
+        "UPDATE rag_corpus_versions SET status='active' WHERE id=$1::uuid",
+        version["id"],
+    )
+    evidence = EvidenceResult(
+        EvidenceStrength.STRONG,
+        (
+            RetrievedEvidence(
+                citation=Citation(
+                    citation_id=str(chunks[0]["id"]),
+                    content="Matter commonly exists as solid, liquid, gas and plasma.",
+                    chapter_id="chapter-1",
+                    topic_no="1.2",
+                    topic_title="States of Matter — Part 1",
+                    page_start=None,
+                    page_end=None,
+                ),
+                fused_rank=1,
+                contributions=(
+                    ChannelContribution(RetrievalChannel.DENSE, 1),
+                    ChannelContribution(RetrievalChannel.LEXICAL, 1),
+                ),
+            ),
+        ),
+        "strong",
+    )
+    provider = FakeProvider(
+        {
+            "blocks": [
+                {"type": "heading", "text": "States of matter", "level": 2},
+                {
+                    "type": "bullet_list",
+                    "items": ["Solid", "Liquid", "Gas", "Plasma"],
+                },
+                {
+                    "type": "heading",
+                    "text": "Additional textbook knowledge (optional)",
+                    "level": 3,
+                },
+                {
+                    "type": "paragraph",
+                    "text": "Intermediate states include supercritical fluids, liquid crystals and graphene.",
+                },
+            ],
+            "cited_chunk_ids": [str(chunk["id"]) for chunk in chunks],
+        }
+    )
+    ask_request = request(question="Explain states of matter.")
+    ask_request.answer_mode = AnswerMode.LONG
+    result = await AskService(
+        conn,
+        retrieval=FakeRetrieval(evidence),
+        provider=provider,
+        usage=FakeUsage(),
+        prompt_service=FakePrompts(),
+    ).ask(ask_request, uid="student", tier=AccountTier.ANONYMOUS)
+
+    sent = json.loads(provider.last_call["user_prompt"])
+    assert len(sent["evidence"]) == 3
+    assert "supercritical fluids" in sent["evidence"][2]["content"]
+    assert [item.visual_id for item in result.visuals] == ["Visual_1", "Visual_3"]
+    assert [block.type for block in result.blocks][-2:] == [
+        "visual_ref",
+        "visual_ref",
+    ]
 
 
 @pytest.mark.asyncio

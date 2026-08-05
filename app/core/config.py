@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = "deepseek-v4-flash"
     DEEPSEEK_TIMEOUT_SECONDS: float = 20.0
     DEEPSEEK_MAX_RETRIES: int = 2
-    DEEPSEEK_MAX_OUTPUT_TOKENS: int = 1600
+    DEEPSEEK_MAX_OUTPUT_TOKENS: int = 2400
     DEEPSEEK_MAX_INPUT_CHARACTERS: int = 32000
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
     EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"

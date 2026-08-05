@@ -9,8 +9,10 @@ from typing import Iterable
 from app.schemas.ask import (
     AnswerBlock,
     AnswerSource,
+    BulletListBlock,
     CitationDto,
     EquationBlock,
+    HeadingBlock,
     ParagraphBlock,
     VisualDto,
     VisualRefBlock,
@@ -48,6 +50,7 @@ def validate_generated_answer(
     citation_ids: Iterable[str],
     allowed_citations: dict[str, CitationDto],
     allowed_visuals: dict[str, VisualDto],
+    include_all_allowed_visuals: bool = False,
 ) -> ValidatedAnswer:
     """Validate the entire response; mixed valid/invalid references fail atomically."""
     citation_id_list = list(citation_ids)
@@ -75,6 +78,32 @@ def validate_generated_answer(
                         maximum=12000,
                         code="ANSWER_PARAGRAPH_INVALID",
                     ),
+                )
+            )
+        elif isinstance(block, HeadingBlock):
+            sanitized.append(
+                HeadingBlock(
+                    type="heading",
+                    text=_clean_text(
+                        block.text,
+                        maximum=300,
+                        code="ANSWER_HEADING_INVALID",
+                    ),
+                    level=block.level,
+                )
+            )
+        elif isinstance(block, BulletListBlock):
+            sanitized.append(
+                BulletListBlock(
+                    type="bullet_list",
+                    items=[
+                        _clean_text(
+                            item,
+                            maximum=2000,
+                            code="ANSWER_BULLET_ITEM_INVALID",
+                        )
+                        for item in block.items
+                    ],
                 )
             )
         elif isinstance(block, EquationBlock):
@@ -110,7 +139,7 @@ def validate_generated_answer(
             (
                 visual
                 for visual in allowed_visuals.values()
-                if visual.display_policy == "always"
+                if (include_all_allowed_visuals or visual.display_policy == "always")
                 and visual.visual_id not in referenced_visual_ids
             ),
             key=lambda visual: (visual.display_order, visual.visual_id),

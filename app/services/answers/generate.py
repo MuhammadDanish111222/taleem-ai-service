@@ -52,7 +52,12 @@ from app.services.prompts.models import (
     PromptScope,
 )
 from app.services.prompts.service import PromptService
-from app.services.retrieval.evidence import RetrievalScope
+from app.services.retrieval.evidence import (
+    Citation,
+    RetrievalScope,
+    RetrievedEvidence,
+    RetrievedVisual,
+)
 from app.services.retrieval.service import RetrievalService
 from app.services.usage.models import AccountTier, UsageReservation
 from app.services.usage.service import UsageLimitExceeded, UsageService
@@ -251,7 +256,20 @@ class AskService:
 
             if evidence.results:
                 prompt_key = PromptKey.ASK_GROUNDED
-                context = assemble_context(evidence.results)
+                generation_results = evidence.results[:4]
+                if request.answer_mode == AnswerMode.LONG and active_version:
+                    generation_results = await self._expand_long_answer_topics(
+                        request=request,
+                        corpus_version_id=str(active_version["id"]),
+                        ranked_results=evidence.results,
+                    )
+                context = assemble_context(
+                    generation_results,
+                    max_chunks=12 if request.answer_mode == AnswerMode.LONG else 4,
+                    max_characters=(
+                        24000 if request.answer_mode == AnswerMode.LONG else 12000
+                    ),
+                )
                 allowed_citations = {
                     item.citation.citation_id: CitationDto(
                         citation_id=item.citation.citation_id,
@@ -261,11 +279,12 @@ class AskService:
                         page_start=item.citation.page_start,
                         page_end=item.citation.page_end,
                     )
-                    for item in evidence.results[:4]
+                    for item in generation_results
                 }
                 allowed_visuals: dict[str, VisualDto] = {}
-                for item in evidence.results[:4]:
-                    for order, visual in enumerate(item.citation.visuals):
+                visual_order = 0
+                for item in generation_results:
+                    for visual in item.citation.visuals:
                         if visual.visual_id in allowed_visuals:
                             raise AskServiceError(
                                 "RETRIEVED_VISUAL_ID_AMBIGUOUS",
@@ -276,8 +295,9 @@ class AskService:
                             title=visual.title,
                             description=visual.description,
                             display_policy=visual.display_policy,
-                            display_order=order,
+                            display_order=visual_order,
                         )
+                        visual_order += 1
                 user_prompt = json.dumps(
                     {
                         "question": request.question,
@@ -393,6 +413,10 @@ class AskService:
                 citation_ids=cited_ids,
                 allowed_citations=allowed_citations,
                 allowed_visuals=allowed_visuals,
+                include_all_allowed_visuals=(
+                    source == AnswerSource.SYLLABUS_GROUNDED
+                    and request.answer_mode == AnswerMode.LONG
+                ),
             )
             async with self._conn.transaction():
                 await self._asks.complete(
@@ -456,6 +480,61 @@ class AskService:
             if isinstance(exc, AnswerValidationError):
                 raise AskServiceError(str(exc), status_code=502) from None
             raise AskServiceError("ASK_INTERNAL_FAILURE", status_code=500) from None
+
+    async def _expand_long_answer_topics(
+        self,
+        *,
+        request: AskRequest,
+        corpus_version_id: str,
+        ranked_results: tuple[RetrievedEvidence, ...],
+    ) -> tuple[RetrievedEvidence, ...]:
+        """Expand top-ranked anchors to complete scoped textbook topics."""
+        repo = RagRepository(self._conn)
+        rows = await repo.get_active_topic_chunks(
+            board_id=request.board_id,
+            class_id=request.class_id,
+            subject_id=request.subject_id,
+            corpus_version_id=corpus_version_id,
+            anchor_citation_ids=[
+                item.citation.citation_id for item in ranked_results[:6]
+            ],
+            max_topics=3,
+            max_chunks=12,
+        )
+        if not rows:
+            return ranked_results[:4]
+        visual_map = await repo.get_eligible_retrieval_visuals(
+            [row["citation_id"] for row in rows]
+        )
+        ranked_by_id = {item.citation.citation_id: item for item in ranked_results}
+        expanded: list[RetrievedEvidence] = []
+        for position, row in enumerate(rows, start=1):
+            ranked = ranked_by_id.get(row["citation_id"])
+            expanded.append(
+                RetrievedEvidence(
+                    citation=Citation(
+                        citation_id=row["citation_id"],
+                        content=row["content"],
+                        chapter_id=row["chapter_id"],
+                        topic_no=row["topic_no"],
+                        topic_title=row["topic_title"],
+                        page_start=row["page_start"],
+                        page_end=row["page_end"],
+                        visuals=tuple(
+                            RetrievedVisual(
+                                visual_id=visual["visual_id"],
+                                title=visual["title"],
+                                description=visual["description"],
+                                display_policy=visual["display_policy"],
+                            )
+                            for visual in visual_map.get(row["citation_id"], ())
+                        ),
+                    ),
+                    fused_rank=ranked.fused_rank if ranked else position,
+                    contributions=ranked.contributions if ranked else (),
+                )
+            )
+        return tuple(expanded)
 
     async def usage(self, *, uid: str, tier: AccountTier) -> UsageDto:
         return self._usage_dto(

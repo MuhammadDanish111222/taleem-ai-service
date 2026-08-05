@@ -1019,3 +1019,106 @@ class RagRepository:
             citation_id = item.pop("citation_id")
             result.setdefault(citation_id, []).append(item)
         return result
+
+    async def get_active_topic_chunks(
+        self,
+        *,
+        board_id: str,
+        class_id: str,
+        subject_id: str,
+        corpus_version_id: str,
+        anchor_citation_ids: List[str],
+        max_topics: int = 3,
+        max_chunks: int = 12,
+    ) -> List[Dict[str, Any]]:
+        """Expand ranked anchors to complete, ordered textbook topics.
+
+        Topic number is the primary identity because ingestion may give split
+        chunks titles such as ``Part 1``/``Part 2``.  Title is used only when a
+        source has no topic number.  Every query repeats the active corpus and
+        board/class/subject predicates so expansion cannot cross a scope.
+        """
+        if not anchor_citation_ids or max_topics < 1 or max_chunks < 1:
+            return []
+        anchors = await self.conn.fetch(
+            """
+            SELECT c.id::text AS citation_id, c.chapter_id, c.topic_no,
+                   c.topic_title
+            FROM unnest($5::uuid[]) WITH ORDINALITY AS requested(id, position)
+            JOIN rag_chunks c ON c.id = requested.id
+            JOIN rag_corpus_versions cv ON cv.id = c.corpus_version_id
+            JOIN rag_corpora corpus ON corpus.id = cv.corpus_id
+            WHERE corpus.board_id = $1
+              AND corpus.class_id = $2
+              AND corpus.subject_id = $3
+              AND cv.id = $4::uuid
+              AND cv.status = 'active'
+              AND c.corpus_version_id = cv.id
+            ORDER BY requested.position
+            """,
+            board_id,
+            class_id,
+            subject_id,
+            corpus_version_id,
+            anchor_citation_ids,
+        )
+        topics: list[tuple[str | None, str | None, str | None]] = []
+        seen_topics: set[tuple[str | None, str, str]] = set()
+        for anchor in anchors:
+            topic_no = anchor["topic_no"]
+            topic_title = anchor["topic_title"]
+            topic_key = (
+                anchor["chapter_id"],
+                "number" if topic_no else "title",
+                topic_no or topic_title or anchor["citation_id"],
+            )
+            if topic_key in seen_topics:
+                continue
+            seen_topics.add(topic_key)
+            topics.append((anchor["chapter_id"], topic_no, topic_title))
+            if len(topics) >= max_topics:
+                break
+
+        expanded: list[Dict[str, Any]] = []
+        seen_chunks: set[str] = set()
+        for chapter_id, topic_no, topic_title in topics:
+            remaining = max_chunks - len(expanded)
+            if remaining <= 0:
+                break
+            rows = await self.conn.fetch(
+                """
+                SELECT c.id::text AS citation_id, c.content, c.chapter_id,
+                       c.topic_no, c.topic_title, c.page_start, c.page_end
+                FROM rag_chunks c
+                JOIN rag_corpus_versions cv ON cv.id = c.corpus_version_id
+                JOIN rag_corpora corpus ON corpus.id = cv.corpus_id
+                WHERE corpus.board_id = $1
+                  AND corpus.class_id = $2
+                  AND corpus.subject_id = $3
+                  AND cv.id = $4::uuid
+                  AND cv.status = 'active'
+                  AND c.corpus_version_id = cv.id
+                  AND c.chapter_id IS NOT DISTINCT FROM $5::text
+                  AND (
+                    ($6::text IS NOT NULL AND c.topic_no = $6)
+                    OR ($6::text IS NULL AND c.topic_no IS NULL
+                        AND c.topic_title IS NOT DISTINCT FROM $7::text)
+                  )
+                ORDER BY c.chunk_index, c.id
+                LIMIT $8
+                """,
+                board_id,
+                class_id,
+                subject_id,
+                corpus_version_id,
+                chapter_id,
+                topic_no,
+                topic_title,
+                remaining,
+            )
+            for row in rows:
+                item = dict(row)
+                if item["citation_id"] not in seen_chunks:
+                    seen_chunks.add(item["citation_id"])
+                    expanded.append(item)
+        return expanded

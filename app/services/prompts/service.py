@@ -29,13 +29,24 @@ teaching instructions. Apply age-appropriate educational safety rules. The \
 top-level object must contain only blocks and cited_chunk_ids. A paragraph block \
 is exactly {"type":"paragraph","text":"..."}; never use content instead of \
 text. An equation block is exactly {"type":"equation","latex":"..."}. A \
+heading block is exactly {"type":"heading","text":"...","level":2} or \
+level 3. A bullet list block is exactly \
+{"type":"bullet_list","items":["...","..."]}. A \
 visual block is exactly {"type":"visual_ref","visual_id":"allowed-id"}. Do \
 not emit answer_source, citations, confidence, or explanatory wrapper fields.
 """
 
 _GROUNDED_SOURCE_RULES = """\
 Use the supplied textbook evidence first. JSON must contain a blocks array and a \
-cited_chunk_ids array. Blocks may be paragraph, equation, or visual_ref. When the \
+cited_chunk_ids array. Blocks may be paragraph, heading, bullet_list, equation, \
+or visual_ref. For long answers, cover the complete supplied textbook topic: \
+organize the core exam answer with meaningful headings and bullet lists, then \
+place relevant examples, applications, side facts, or enrichment that are in \
+the supplied topic but not essential to the direct answer under the exact \
+heading "Additional textbook knowledge (optional)". Do not omit such supplied \
+topic material and do not label an essential answer point optional. Insert each \
+useful allowed visual_ref immediately after the section it supports. For short \
+answers, remain concise and include only directly relevant textbook points. When the \
 answer is supported by the evidence, cite at least one supporting allowed chunk \
 identifier. Every cited chunk and visual_ref must use an allowed identifier \
 exactly. When the evidence does not support the answer and allow_general is true, \
@@ -48,7 +59,8 @@ an answer appear grounded.
 
 _GENERAL_SOURCE_RULES = """\
 This is a general-knowledge answer. JSON must contain a blocks array and an \
-empty cited_chunk_ids array. Blocks may be paragraph or equation only; never \
+empty cited_chunk_ids array. Blocks may be paragraph, heading, bullet_list, or \
+equation only; never \
 emit visual_ref. Never claim textbook verification or textbook citations.
 """
 

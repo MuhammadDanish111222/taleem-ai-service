@@ -71,6 +71,24 @@ class ParagraphBlock(StrictModel):
     text: str = Field(min_length=1, max_length=12000)
 
 
+class HeadingBlock(StrictModel):
+    type: Literal["heading"]
+    text: str = Field(min_length=1, max_length=300)
+    level: Literal[2, 3]
+
+
+class BulletListBlock(StrictModel):
+    type: Literal["bullet_list"]
+    items: list[str] = Field(min_length=1, max_length=40)
+
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 2000 for item in value):
+            raise ValueError("ANSWER_BULLET_ITEM_INVALID")
+        return value
+
+
 class EquationBlock(StrictModel):
     type: Literal["equation"]
     latex: str = Field(min_length=1, max_length=4000)
@@ -82,7 +100,13 @@ class VisualRefBlock(StrictModel):
 
 
 AnswerBlock = Annotated[
-    Union[ParagraphBlock, EquationBlock, VisualRefBlock],
+    Union[
+        ParagraphBlock,
+        HeadingBlock,
+        BulletListBlock,
+        EquationBlock,
+        VisualRefBlock,
+    ],
     Field(discriminator="type"),
 ]
 

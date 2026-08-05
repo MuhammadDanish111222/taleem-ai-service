@@ -4,8 +4,10 @@ import pytest
 
 from app.schemas.ask import (
     AnswerSource,
+    BulletListBlock,
     CitationDto,
     EquationBlock,
+    HeadingBlock,
     ParagraphBlock,
     VisualDto,
     VisualRefBlock,
@@ -180,3 +182,38 @@ def test_always_visual_is_backend_guaranteed_and_unsafe_latex_rejected():
             allowed_citations={},
             allowed_visuals={},
         )
+
+
+def test_long_answer_structure_and_all_topic_visuals_are_preserved():
+    visuals = {
+        visual_id: VisualDto(
+            visual_id=visual_id,
+            title=visual_id,
+            description="Reviewed topic visual",
+            display_policy="llm_decide",
+            display_order=order,
+        )
+        for order, visual_id in enumerate(("Visual_1", "Visual_2"))
+    }
+    result = validate_generated_answer(
+        source=AnswerSource.SYLLABUS_GROUNDED,
+        blocks=[
+            HeadingBlock(type="heading", text="States of matter", level=2),
+            BulletListBlock(
+                type="bullet_list",
+                items=["Solid", "Liquid", "Gas"],
+            ),
+        ],
+        citation_ids=["chunk-1"],
+        allowed_citations={"chunk-1": CitationDto(citation_id="chunk-1")},
+        allowed_visuals=visuals,
+        include_all_allowed_visuals=True,
+    )
+
+    assert isinstance(result.blocks[0], HeadingBlock)
+    assert isinstance(result.blocks[1], BulletListBlock)
+    assert [item.visual_id for item in result.visuals] == ["Visual_1", "Visual_2"]
+    assert [block.visual_id for block in result.blocks[2:]] == [
+        "Visual_1",
+        "Visual_2",
+    ]

@@ -1,5 +1,14 @@
 # Taleem AI Service - Key Decisions & Architectural Changes
 
+## Module 4 long-answer decisions
+
+- **Decision:** Complete a bounded textbook topic instead of treating one retrieved chunk as the whole long answer.
+  - Long mode expands ranked anchors by chapter and stable `topic_no`, preserving chunk order and repeating active corpus/scope predicates in SQL. Expansion is capped at three topics, twelve chunks, and 24,000 characters so broad questions remain bounded. Short mode is unchanged.
+- **Decision:** Treat optional textbook enrichment as learnable content, not disposable retrieval noise.
+  - Same-topic examples, applications, and side facts supplied to the model must be retained under the explicit heading `Additional textbook knowledge (optional)`. Essential answer content may never be labelled optional.
+- **Decision:** Return all eligible visuals for selected long-answer topics.
+  - The model may position logical visual references contextually, but the backend deterministically appends any missing approved `always` or `llm_decide` visual. Image bytes, URLs, Drive IDs, and storage keys remain outside the text provider boundary.
+
 This document logs significant architectural decisions and changes made for the Python AI microservice.
 
 ## Module 4 Run 1 decisions

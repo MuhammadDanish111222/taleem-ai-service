@@ -1,5 +1,12 @@
 # Taleem AI Service - Progress Log
 
+## Module 4 — Long-answer completeness hardening
+
+- **Implemented:** Long grounded answers expand the top scoped retrieval anchors into complete ordered textbook topics (maximum three topics, twelve chunks, and 24,000 context characters). Short answers retain the existing four-chunk bounded path.
+- **Structure and enrichment:** The strict answer contract now supports semantic headings and bullet lists. Supplied same-topic enrichment is retained under `Additional textbook knowledge (optional)` while essential answer points cannot be demoted to optional material.
+- **Visuals:** Every approved `always` or `llm_decide` visual linked to the selected long-answer topics is returned. DeepSeek still receives metadata only, and missing visual references are appended deterministically after allowlist validation.
+- **Verification:** Full service suite: `181 passed`, `3` intentionally gated tests skipped. Full Firestore-emulator web suite: `296 passed`, `1` intentionally gated test skipped. Ruff, focused long-answer tests, ESLint, TypeScript, production build, client-bundle secret scan, and both repository diff checks pass.
+
 This document serves as a persistent record of the progress made on the Python-based AI microservice.
 
 ## Module 4 — Ask a Question, Run 2 staging delivery
