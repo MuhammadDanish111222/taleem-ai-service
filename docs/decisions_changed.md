@@ -34,6 +34,8 @@ This document logs significant architectural decisions and changes made for the 
   - Passing disposable-stack and local browser tests does not authorize a real migration, provider charge, deployment, retention deletion, commit, or completion claim. Module 4 stays open until those real checks are directly verified.
 - **Decision:** Retrieval rank agreement is not proof that an answer is textbook-grounded.
   - Strong and weak non-empty retrieval results may be supplied as bounded evidence, but a generated answer is stored and rendered as `syllabus_grounded` only when it cites at least one allowed retrieved chunk. A reference-free answer becomes clearly labelled General AI only when the typed policy allows it; otherwise the request ends in an honest no-answer state.
+- **Decision:** Close Module 4 only after the public support configuration is live.
+  - The owner-provided WhatsApp support configuration was written and read back from real Firestore. It enables the usage-limit contact action without changing quota enforcement or exposing server credentials.
 
 ## Phase 0: Framework & Architecture
 - **Decision:** Python + FastAPI over Node.js for AI tasks.

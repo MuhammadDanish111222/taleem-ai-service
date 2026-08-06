@@ -17,7 +17,7 @@ FastAPI AI microservice for the Taleem AI platform (`taleem-ai-service`).
 - **Module 4 Single Ask**: Typed-English `short|long` questions resolve against the approved bank first, then active textbook evidence, and finally the explicitly enabled General AI fallback. Student generation is retained as a pending candidate until a local administrator approves a corrected immutable bank revision.
 - **Continuity and Safety**: Redis provides the normal atomic quota/JTI/cache path, PostgreSQL preserves limits and replay safety during a controlled Redis outage, and identity-scoped request UUIDs make retries idempotent.
 
-Module 4 deployment ownership and verification procedures are documented in [`docs/deployment_runbook.md`](docs/deployment_runbook.md). The repository implementation is locally verified, but Module 4 remains open until the real Supabase, shared Redis, provider, staging, deployment, push, and CI exit gates pass.
+Module 4 deployment ownership and verification procedures are documented in [`docs/deployment_runbook.md`](docs/deployment_runbook.md). Module 4 is complete: real Supabase, shared Redis, provider, staging, deployment, CI, and the public WhatsApp support setting were verified.
 
 ## Getting Started
 

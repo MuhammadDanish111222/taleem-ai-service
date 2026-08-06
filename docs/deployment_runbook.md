@@ -34,4 +34,4 @@ Run fake-provider tests first. Verify the configured model, non-thinking JSON ou
 
 Verify `/api/v1/health` and readiness, then run the approved-bank, grounded, General AI, disabled-fallback, quota/concurrency, idempotency, prompt rollback, candidate approval/reuse, visual, and security staging scenarios. Approved reuse must perform no embedding, retrieval, or provider call. General AI must have no textbook citations or visuals.
 
-Module 4 may be marked complete only after the real staging path no longer depends on the owner's laptop and the current main-branch GitHub Actions run is green.
+Module 4 completion was verified after the real staging path, main-branch deployment, CI, and the public WhatsApp support setting were confirmed. Keep the same checks for future changes.

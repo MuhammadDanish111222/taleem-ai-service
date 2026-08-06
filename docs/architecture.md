@@ -28,6 +28,7 @@ This document provides the definitive architectural design, database schema spec
 - Approved and grounded visual blocks carry only logical visual IDs to the web. The protected resolver checks reviewed database links and a configured storage allowlist; ambiguous, invented, or unreviewed IDs fail closed. General AI has no visual/citation path.
 - The provider adapter uses environment-configurable `deepseek-v4-flash`, non-thinking mode, JSON object output, bounded characters/tokens, timeout, and retries. The actual provider/model is persisted per attempt; prompt draft tests are audited without raw prompt or question content.
 - Semantic approved matching is off until an evaluation demonstrates acceptable precision. The locked BGE model/revision is used only against approved questions and approved variations, never candidate answers.
+- The public limit-exceeded support action is configured through the verified Firestore `academy_settings/default` document. It contains only the owner-approved public WhatsApp number and message; it is not a service secret or an AI-service dependency.
 
 ---
 
