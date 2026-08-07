@@ -8,12 +8,15 @@ content as a cache: only immutable approved-bank revisions are reusable.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
+from types import SimpleNamespace
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.providers.llm.deepseek import DeepSeekProviderError
 from app.repositories.ask_repository import AskRepository
 from app.repositories.multiple_ask_repository import MultipleAskRepository
 from app.repositories.rag_repository import RagRepository
@@ -28,6 +31,7 @@ from app.services.answers.context import assemble_context
 from app.services.answers.generate import (
     _MAX_COMPLETE_TOPIC_CHUNKS,
     AskService,
+    AskServiceError,
     _normalize_provider_block_aliases,
 )
 from app.services.answers.validation import (
@@ -40,6 +44,8 @@ from app.services.prompts.models import AnswerMode as PromptAnswerMode
 from app.services.prompts.models import PromptKey, PromptScope
 from app.services.retrieval.evidence import RetrievalScope
 from app.services.usage.service import UsageService
+
+logger = logging.getLogger(__name__)
 
 _BLOCKS = TypeAdapter(list[AnswerBlock])
 
@@ -230,12 +236,14 @@ class MultipleAskAnswerService:
             if evidence.results:
                 results = evidence.results[:1]
                 if active:
-
-                    class _Request:
-                        answer_mode = mode
-
+                    request_context = SimpleNamespace(
+                        board_id=job["board_id"],
+                        class_id=job["class_id"],
+                        subject_id=job["subject_id"],
+                        answer_mode=mode,
+                    )
                     results = await self._ask._expand_answer_topics(
-                        request=_Request(),
+                        request=request_context,
                         corpus_version_id=str(active["id"]),
                         ranked_results=evidence.results,
                     )
@@ -351,9 +359,29 @@ class MultipleAskAnswerService:
                     answer_source=source.value,
                     approved_revision_id=None,
                 )
-        except (ValidationError, AnswerValidationError, MultipleAskAnswerError) as exc:
-            await self._fail_item(item, getattr(exc, "code", str(exc)))
+        except (
+            ValidationError,
+            AnswerValidationError,
+            MultipleAskAnswerError,
+            AskServiceError,
+            DeepSeekProviderError,
+        ) as exc:
+            code = getattr(exc, "code", str(exc))
+            if hasattr(code, "value"):
+                code = code.value
+            logger.warning(
+                "Handled error for Multiple Ask item_id=%s job_id=%s: %s",
+                item.get("id"),
+                job.get("id"),
+                code,
+            )
+            await self._fail_item(item, str(code))
         except Exception:
+            logger.exception(
+                "Unexpected error for Multiple Ask item_id=%s job_id=%s",
+                item.get("id"),
+                job.get("id"),
+            )
             await self._fail_item(item, "MULTIPLE_ASK_ANSWER_FAILED")
 
     async def _answer_mcq_group(
