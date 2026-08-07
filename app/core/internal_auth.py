@@ -240,7 +240,7 @@ async def verify_internal_jwt(
                     "message": "Invalid account_tier claim",
                 },
             )
-        if feature in {"ask", "ask_usage"} and account_tier is None:
+        if feature in {"ask", "ask_usage", "multiple_ask"} and account_tier is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={

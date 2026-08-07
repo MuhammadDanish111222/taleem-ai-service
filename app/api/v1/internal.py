@@ -1,14 +1,18 @@
 import hashlib
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.core.config import get_settings
 from app.core.firebase_admin import get_firebase_app
 from app.core.internal_auth import AuthContext, verify_internal_jwt
 from app.db.pool import get_db_connection
+from app.repositories.ask_repository import AskRepository
 from app.repositories.audit_repository import AuditRepository
+from app.repositories.multiple_ask_repository import MultipleAskRepository
 from app.services.ingestion.jsonl_chunks import (
     extract_safe_scope,
     get_validation_error_code,
@@ -16,10 +20,16 @@ from app.services.ingestion.jsonl_chunks import (
 )
 from app.services.jobs.queue import JobQueueService
 from app.services.local_admin import LocalAdminError, LocalAdminService
+from app.services.multiple_ask import MultipleAskError, MultipleAskService
+from app.services.multiple_ask_answers import MultipleAskAnswerService
+from app.services.multiple_ask_extraction_service import MultipleAskExtractionService
 from app.services.retrieval.evidence import RetrievalScope
 from app.services.retrieval.service import RetrievalScopeError, RetrievalService
+from app.services.usage.models import AccountTier
+from app.services.usage.service import UsageLimitExceeded, UsageService
 
 router = APIRouter()
+_MULTIPLE_ASK_SCOPE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$"
 
 
 class JsonlIngestRequest(BaseModel):
@@ -71,6 +81,63 @@ class PairedImportStatusRequest(BaseModel):
     import_hash: str
 
 
+class MultipleAskFileSessionRequest(BaseModel):
+    request_id: UUID
+    input_kind: Literal["image", "pdf"]
+    content_type: str = Field(..., min_length=1, max_length=100)
+    size_bytes: int = Field(..., gt=0)
+    board_id: str = Field(
+        ..., min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+    class_id: str = Field(
+        ..., min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+    subject_id: str = Field(
+        ..., min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+    chapter_id: Optional[str] = Field(
+        None, min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+
+
+class MultipleAskFinalizeRequest(BaseModel):
+    request_id: UUID
+    session_id: UUID
+
+
+class MultipleAskTextRequest(BaseModel):
+    request_id: UUID
+    text: str = Field(..., min_length=1, max_length=30000)
+    board_id: str = Field(
+        ..., min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+    class_id: str = Field(
+        ..., min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+    subject_id: str = Field(
+        ..., min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+    chapter_id: Optional[str] = Field(
+        None, min_length=1, max_length=120, pattern=_MULTIPLE_ASK_SCOPE_PATTERN
+    )
+
+
+class MultipleAskCorrectionOption(BaseModel):
+    label: Literal["A", "B", "C", "D"]
+    text: str = Field(..., min_length=1, max_length=5000)
+
+
+class MultipleAskCorrectionRequest(BaseModel):
+    request_id: UUID
+    question_text: str = Field(..., min_length=1, max_length=30000)
+    answer_mode: Literal["short", "long", "mcq"]
+    mcq_options: list[MultipleAskCorrectionOption] = Field(default_factory=list)
+
+
+class MultipleAskResumeRequest(BaseModel):
+    request_id: UUID
+
+
 def _valid_sha256(value: str) -> bool:
     return len(value) == 64 and all(
         character in "0123456789abcdef" for character in value
@@ -99,6 +166,30 @@ def _get_firestore_db():
     return firestore.client(app=app)
 
 
+def _multiple_ask_tier(auth: AuthContext) -> AccountTier:
+    if not get_settings().MULTIPLE_ASK_RUN1_ENABLED:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+    if auth.feature != "multiple_ask":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "AUTH_FEATURE_FORBIDDEN", "message": "Feature denied"},
+        )
+    try:
+        return AccountTier(auth.account_tier)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "AUTH_INVALID_TOKEN", "message": "Invalid account tier"},
+        ) from None
+
+
+def _multiple_ask_error(exc: MultipleAskError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": "Multiple Ask request rejected"},
+    )
+
+
 @router.get("/internal/verify")
 async def verify_internal_access(
     auth_context: AuthContext = Depends(verify_internal_jwt),
@@ -111,6 +202,282 @@ async def verify_internal_access(
         "feature": auth_context.feature,
         "request_id": auth_context.request_id,
     }
+
+
+@router.post("/internal/multiple-ask/upload-sessions")
+async def create_multiple_ask_upload_session(
+    request: MultipleAskFileSessionRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    """Mint a browser-safe capability for one private temporary file object."""
+    tier = _multiple_ask_tier(auth_context)
+    if str(request.request_id) != auth_context.request_id:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
+    try:
+        async with get_db_connection() as conn:
+            return await MultipleAskService(conn).create_file_session(
+                client_request_id=str(request.request_id),
+                uid=auth_context.uid,
+                tier=tier,
+                input_kind=request.input_kind,
+                content_type=request.content_type,
+                size_bytes=request.size_bytes,
+                board_id=request.board_id,
+                class_id=request.class_id,
+                subject_id=request.subject_id,
+                chapter_id=request.chapter_id,
+            )
+    except MultipleAskError as exc:
+        raise _multiple_ask_error(exc) from None
+
+
+@router.post("/internal/multiple-ask/upload-sessions/finalize")
+async def finalize_multiple_ask_upload_session(
+    request: MultipleAskFinalizeRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    """Finalize the source and atomically create its durable validation job."""
+    tier = _multiple_ask_tier(auth_context)
+    if str(request.request_id) != auth_context.request_id:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
+    try:
+        async with get_db_connection() as conn:
+            return await MultipleAskService(conn).finalize_file(
+                session_id=str(request.session_id),
+                client_request_id=str(request.request_id),
+                uid=auth_context.uid,
+                tier=tier,
+            )
+    except UsageLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "USAGE_LIMIT_REACHED",
+                "message": "Daily batch limit reached",
+            },
+        ) from exc
+    except MultipleAskError as exc:
+        raise _multiple_ask_error(exc) from None
+
+
+@router.post("/internal/multiple-ask/text")
+async def submit_multiple_ask_text(
+    request: MultipleAskTextRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    """Small pasted text uses the same durable parent/quota model, not Storage."""
+    tier = _multiple_ask_tier(auth_context)
+    if str(request.request_id) != auth_context.request_id:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
+    try:
+        async with get_db_connection() as conn:
+            return await MultipleAskService(conn).submit_text(
+                client_request_id=str(request.request_id),
+                uid=auth_context.uid,
+                tier=tier,
+                text=request.text,
+                board_id=request.board_id,
+                class_id=request.class_id,
+                subject_id=request.subject_id,
+                chapter_id=request.chapter_id,
+            )
+    except UsageLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "USAGE_LIMIT_REACHED",
+                "message": "Daily batch limit reached",
+            },
+        ) from exc
+    except MultipleAskError as exc:
+        raise _multiple_ask_error(exc) from None
+
+
+def _multiple_ask_status_response(record: dict[str, Any]) -> dict[str, Any]:
+    """Return only polling-safe metadata, never source text, keys, or bytes."""
+
+    def timestamp(value: Any) -> str | None:
+        return value.isoformat() if hasattr(value, "isoformat") else None
+
+    def json_value(value: Any, fallback: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return fallback
+        return value if value is not None else fallback
+
+    return {
+        "job_id": str(record["id"]),
+        "workflow_status": record["workflow_status"],
+        "input_kind": record["input_kind"],
+        "scope": {
+            "board_id": record["board_id"],
+            "class_id": record["class_id"],
+            "subject_id": record["subject_id"],
+            "chapter_id": record["chapter_id"],
+        },
+        "created_at": timestamp(record["created_at"]),
+        "updated_at": timestamp(record["updated_at"]),
+        "retention_expires_at": timestamp(record.get("retention_expires_at")),
+        "terminal_error_code": record.get("terminal_error_code"),
+        "queue": {
+            "status": record.get("queue_status"),
+            "stage": record.get("queue_stage"),
+            "progress": record.get("queue_progress"),
+        },
+        "items": [
+            {
+                "item_id": str(item["id"]),
+                "item_index": item["item_index"],
+                "display_label": item.get("display_label"),
+                "section_context": item.get("section_context"),
+                "item_status": item["item_status"],
+                "normalized_question": item["normalized_question"],
+                "answer_mode": item["answer_mode"],
+                "mcq_options": json_value(item["mcq_options"], []),
+                "unclear_reason": item["unclear_reason"],
+                "terminal_error_code": item.get("terminal_error_code"),
+                "source_locator": json_value(item["source_locator"], None),
+                "extraction_version": item["extraction_version"],
+                "correction_version": item["correction_version"],
+                "corrected_at": timestamp(item["corrected_at"]),
+                "result": (
+                    {
+                        "answer_source": item.get("answer_source")
+                        or item.get("persisted_answer_source"),
+                        "blocks": json_value(item.get("answer_blocks"), []),
+                        "citations": (
+                            json_value(item.get("citation_sources"), [])
+                            if (
+                                item.get("answer_source")
+                                or item.get("persisted_answer_source")
+                            )
+                            in {"approved_bank", "syllabus_grounded"}
+                            else []
+                        ),
+                        "visual_ids": (
+                            json_value(item.get("visual_ids"), [])
+                            if (
+                                item.get("answer_source")
+                                or item.get("persisted_answer_source")
+                            )
+                            in {"approved_bank", "syllabus_grounded"}
+                            else []
+                        ),
+                        "approved_revision_id": (
+                            str(item["approved_revision_id"])
+                            if item.get("approved_revision_id")
+                            else None
+                        ),
+                    }
+                    if item["item_status"] == "answered"
+                    else None
+                ),
+            }
+            for item in record["items"]
+        ],
+        "summary": {
+            "total": len(record["items"]),
+            "short": sum(item["answer_mode"] == "short" for item in record["items"]),
+            "long": sum(item["answer_mode"] == "long" for item in record["items"]),
+            "mcq": sum(item["answer_mode"] == "mcq" for item in record["items"]),
+            "not_clear": sum(
+                item["answer_mode"] == "not_clear" for item in record["items"]
+            ),
+        },
+    }
+
+
+@router.get("/internal/multiple-ask/jobs/{job_id}")
+async def get_multiple_ask_job_status(
+    job_id: UUID, auth_context: AuthContext = Depends(verify_internal_jwt)
+):
+    _multiple_ask_tier(auth_context)
+    async with get_db_connection() as conn:
+        record = await MultipleAskRepository(conn).get_owned_job_status(
+            job_id=str(job_id), uid_hash=UsageService().uid_hash(auth_context.uid)
+        )
+    if record is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "MULTIPLE_ASK_JOB_NOT_FOUND"}
+        )
+    return _multiple_ask_status_response(record)
+
+
+@router.get("/internal/multiple-ask/jobs/{job_id}/visual/{visual_id}")
+async def multiple_ask_visual_reference(
+    job_id: UUID,
+    visual_id: str,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    _multiple_ask_tier(auth_context)
+    if not visual_id or len(visual_id) > 160:
+        raise HTTPException(status_code=404, detail={"code": "VISUAL_NOT_FOUND"})
+    try:
+        async with get_db_connection() as conn:
+            reference = await AskRepository(conn).multiple_ask_visual_stream_reference(
+                job_id=str(job_id),
+                uid_hash=UsageService().uid_hash(auth_context.uid),
+                visual_id=visual_id,
+            )
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "VISUAL_CONFIGURATION_ERROR"},
+        ) from None
+    if reference is None:
+        raise HTTPException(status_code=404, detail={"code": "VISUAL_NOT_FOUND"})
+    return reference
+
+
+@router.post("/internal/multiple-ask/jobs/{job_id}/items/{item_id}/correction")
+async def correct_multiple_ask_item(
+    job_id: UUID,
+    item_id: UUID,
+    request: MultipleAskCorrectionRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    _multiple_ask_tier(auth_context)
+    if str(request.request_id) != auth_context.request_id:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
+    try:
+        async with get_db_connection() as conn:
+            service = MultipleAskExtractionService(conn)
+            record = await service.apply_correction(
+                job_id=str(job_id),
+                item_id=str(item_id),
+                uid=auth_context.uid,
+                request_id=str(request.request_id),
+                question_text=request.question_text,
+                answer_mode=request.answer_mode,
+                mcq_options=[option.model_dump() for option in request.mcq_options],
+            )
+        if record is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "MULTIPLE_ASK_JOB_NOT_FOUND"}
+            )
+        return _multiple_ask_status_response(record)
+    except MultipleAskError as exc:
+        raise _multiple_ask_error(exc) from None
+
+
+@router.post("/internal/multiple-ask/jobs/{job_id}/resume")
+async def resume_multiple_ask_job(
+    job_id: UUID,
+    request: MultipleAskResumeRequest,
+    auth_context: AuthContext = Depends(verify_internal_jwt),
+):
+    _multiple_ask_tier(auth_context)
+    if str(request.request_id) != auth_context.request_id:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
+    try:
+        async with get_db_connection() as conn:
+            return await MultipleAskAnswerService(conn).start_for_job(
+                job_id=str(job_id), uid=auth_context.uid
+            )
+    except MultipleAskError as exc:
+        raise _multiple_ask_error(exc) from None
 
 
 @router.post("/internal/ingest/jsonl", status_code=status.HTTP_202_ACCEPTED)

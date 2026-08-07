@@ -40,6 +40,10 @@ async def test_migrations_execution_and_idempotency():
         assert "0001_platform_core.sql" in versions
         assert "0002_rag_schema.sql" in versions
         assert "0003_security_grants.sql" in versions
+        assert "0010_module5_multiple_ask_foundation.sql" in versions
+        assert "0011_module5_run1_foundation_corrections.sql" in versions
+        assert "0012_module5_run2_ocr_extraction.sql" in versions
+        assert "0013_module5_run2_paper_formats_and_refunds.sql" in versions
     finally:
         await connection.close()
 
@@ -186,6 +190,12 @@ ALL_TABLES = [
     "daily_usage",
     "usage_reservations",
     "internal_jti_replay",
+    "multiple_ask_upload_sessions",
+    "multiple_ask_text_inputs",
+    "multiple_ask_jobs",
+    "multiple_ask_job_items",
+    "multiple_ask_cleanup_audit",
+    "multiple_ask_normalized_sources",
 ]
 
 

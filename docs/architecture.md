@@ -1,5 +1,18 @@
 # Taleem AI Service Architecture & Database Schema Specification
 
+## Module 5 Run 4 consumer boundary
+
+- The service Multiple Ask pipeline remains unchanged: browser-facing code consumes only the existing safe job/status/correction/resume result contracts through the web BFF. A narrow job-owned visual lookup resolves only reviewed visual storage references server-side for an answered item; the browser receives streamed bytes from the BFF, never a storage reference. The service remains the authority for validation, extraction, quotas, answer-source assignment, retention, and temporary-source cleanup.
+- Production routes remain dark while `MULTIPLE_ASK_RUN1_ENABLED=false`; that BFF gate executes before authentication, parsing, or service work. Run 4 adds no direct browser-to-service connection and no database migration.
+
+## Module 5 Runs 1–3: Multiple Ask foundation (feature-gated)
+
+- A private `multiple_ask_upload_sessions` record owns one direct Storage capability per identity-scoped request UUID and immutable curriculum scope; signed capabilities are never persisted and service-only object keys are redacted at raw-source expiry. The service alone holds the Supabase service role. File bytes bypass Vercel and DeepSeek.
+- `multiple_ask_jobs` and per-item `multiple_ask_job_items` are durable domain records separate from `job_queue.status`. Railway canonically validates bounded private bytes before committing the existing batch quota. Run 2 uses local Tesseract/PyMuPDF only for the student's temporary upload, never textbooks and never DeepSeek. Item modes are `short|long|mcq|not_clear`; a mixed batch never persists `mixed` for an item.
+- Run 3 adds Railway-only `multiple_ask_answer` work. Short/long items reuse only immutable approved revisions of the same answer mode, then Module 4 retrieval and grounded/general policy with validated citations/visuals. MCQs are bounded text-only general-knowledge batches with no textbook citations or visuals. Generated output remains pending in Module 4 `ai_requests`/`ai_answers`; item rows link to the result and any approved immutable revision. `MULTIPLE_ASK_RUN1_ENABLED=false` continues to return 404 before BFF/service authentication work. Module 5 remains incomplete pending Run 4 student UI.
+- Extracted items retain their paper label (for example `2(ii)` or `5(a)`) and section context. More than 60 detected items ends the job as `too_many_questions`, refunds its already committed batch exactly once, and never silently omits questions. A corrected item must explicitly select `short`, `long`, or `mcq`; MCQ correction requires exactly ordered A–D options.
+- The feature is 404-gated until the complete later runs. Railway-public owns only student upload validation/OCR/extraction and future answering; local-admin retains all ingestion/bulk embedding ownership. See [`module5_run1_multiple_ask.md`](module5_run1_multiple_ask.md).
+
 ## Module 4 long-answer retrieval and rendering
 
 - Retrieval considers a five-result anchor window but sends topic-complete context rather than unrelated individual hits. Short answers expand only the highest-ranked subtopic. Long answers always expand that subtopic and may expand at most one additional subtopic only when it independently meets the existing multi-channel top-three rule or appears at least twice in the anchor window. Both paths remain bounded to twelve chunks; short context is capped at 12,000 characters and long context at 24,000 characters.

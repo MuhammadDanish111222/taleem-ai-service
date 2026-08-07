@@ -1,0 +1,67 @@
+{
+  "standard_numbered": {
+    "source_text": "1. Define acceleration.\n\n2. Explain why a seat belt is important in a moving car.\n\n3. Which quantity is a vector?\nA. Mass\nB. Time\nC. Velocity\nD. Speed",
+    "expected": [
+      {
+        "source_order": 0,
+        "question_text": "Define acceleration.",
+        "answer_mode": "short",
+        "mcq_options": [],
+        "source_locator": {"page_number": 1}
+      },
+      {
+        "source_order": 1,
+        "question_text": "Explain why a seat belt is important in a moving car.",
+        "answer_mode": "long",
+        "mcq_options": [],
+        "source_locator": {"page_number": 1}
+      },
+      {
+        "source_order": 2,
+        "question_text": "Which quantity is a vector?",
+        "answer_mode": "mcq",
+        "mcq_options": [
+          {"label": "A", "text": "Mass"},
+          {"label": "B", "text": "Time"},
+          {"label": "C", "text": "Velocity"},
+          {"label": "D", "text": "Speed"}
+        ],
+        "source_locator": {"page_number": 1}
+      }
+    ]
+  },
+  "page_order_and_unclear": {
+    "source_text": "1. State Newton's first law of motion.\n\f\n2. What is the SI unit of force?\n\n3. [illegible question text]",
+    "expected": [
+      {
+        "source_order": 0,
+        "question_text": "State Newton's first law of motion.",
+        "answer_mode": "short",
+        "mcq_options": [],
+        "source_locator": {"page_number": 1}
+      },
+      {
+        "source_order": 1,
+        "question_text": "What is the SI unit of force?",
+        "answer_mode": "short",
+        "mcq_options": [],
+        "source_locator": {"page_number": 2}
+      },
+      {
+        "source_order": 2,
+        "question_text": "[illegible question text]",
+        "answer_mode": "not_clear",
+        "mcq_options": [],
+        "unclear_reason": "QUESTION_TEXT_UNCLEAR",
+        "source_locator": {"page_number": 2}
+      }
+    ]
+  },
+  "conservative_ocr_text": {
+    "source_text": "1) Defne momentum.\n2) Name the unit of momenturn.",
+    "expected_question_text": ["Defne momentum.", "Name the unit of momenturn."]
+  },
+  "sixteen_numbered_questions": {
+    "source_text": "1. What is item 1?\n2. What is item 2?\n3. What is item 3?\n4. What is item 4?\n5. What is item 5?\n6. What is item 6?\n7. What is item 7?\n8. What is item 8?\n9. What is item 9?\n10. What is item 10?\n11. What is item 11?\n12. What is item 12?\n13. What is item 13?\n14. What is item 14?\n15. What is item 15?\n16. What is item 16?"
+  }
+}

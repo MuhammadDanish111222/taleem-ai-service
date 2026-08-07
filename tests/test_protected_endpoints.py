@@ -81,6 +81,21 @@ def test_unsigned_direct_local_admin_request_rejected():
     assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
 
 
+def test_unsigned_multiple_ask_session_request_rejected():
+    """The temporary-upload capability is private even while its BFF is dark."""
+    response = client.post(
+        "/api/v1/internal/multiple-ask/upload-sessions",
+        json={
+            "request_id": "123e4567-e89b-42d3-a456-426614174000",
+            "input_kind": "pdf",
+            "content_type": "application/pdf",
+            "size_bytes": 123,
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "AUTH_INVALID_TOKEN"
+
+
 def test_unsigned_direct_paired_import_audit_rejected():
     """Paired-import state is internal-only and never accepts an unsigned caller."""
     response = client.post(

@@ -51,6 +51,7 @@ DB_URL = os.getenv(
     "TEST_DATABASE_URL",
     "postgresql://postgres:postgres@localhost:5432/taleem_dev",
 )
+TEST_BOARD = f"test-ask-{uuid.uuid4().hex[:20]}"
 
 
 @pytest.fixture
@@ -59,6 +60,19 @@ async def conn():
     transaction = connection.transaction()
     await transaction.start()
     try:
+        updated = await connection.execute(
+            """UPDATE ask_source_policies
+               SET allow_general=FALSE, semantic_reuse_enabled=FALSE,
+                   semantic_distance_threshold=NULL
+               WHERE class_id='class-9' AND subject_id='physics'"""
+        )
+        if updated == "UPDATE 0":
+            await connection.execute(
+                """INSERT INTO ask_source_policies(
+                       class_id,subject_id,allow_general,semantic_reuse_enabled,
+                       semantic_distance_threshold,updated_by
+                   ) VALUES('class-9','physics',FALSE,FALSE,NULL,'test')"""
+            )
         yield connection
     finally:
         await transaction.rollback()
@@ -171,7 +185,7 @@ class FakeProvider:
 def request(question="What is force?", chapter_id="chapter-1"):
     return AskRequest(
         request_id=uuid.uuid4(),
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
         chapter_id=chapter_id,
@@ -185,7 +199,7 @@ async def create_approved(conn, question, chapter_id):
     normalized = normalize_question(question)
     return await QuestionBankRepository(conn).create_approved_revision(
         actor_id="admin",
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
         chapter_id=chapter_id,
@@ -206,7 +220,7 @@ async def create_reviewed_visual(conn):
     configuration = BGEEmbeddingConfiguration()
     rag = RagRepository(conn)
     corpus = await rag.get_or_create_corpus(
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
     )
@@ -299,7 +313,7 @@ async def test_approved_visual_is_rehydrated_on_idempotent_replay(conn):
     normalized = normalize_question(question)
     revision_id = await QuestionBankRepository(conn).create_approved_revision(
         actor_id="admin",
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
         chapter_id="chapter-1",
@@ -399,7 +413,7 @@ async def test_semantic_repository_never_reuses_unapproved_rows(conn):
         query_embedding=vector,
         evaluated_threshold=0.25,
         enabled=True,
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
         chapter_id="chapter-1",
@@ -489,7 +503,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
     configuration = BGEEmbeddingConfiguration()
     rag = RagRepository(conn)
     corpus = await rag.get_or_create_corpus(
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
     )
@@ -643,7 +657,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
 async def test_strong_but_irrelevant_evidence_becomes_labelled_general_answer(conn):
     await conn.execute(
         """UPDATE ask_source_policies SET allow_general=TRUE
-           WHERE class_id IS NULL AND subject_id IS NULL"""
+               WHERE class_id='class-9' AND subject_id='physics'"""
     )
     evidence = EvidenceResult(
         EvidenceStrength.STRONG,
@@ -696,7 +710,7 @@ async def test_strong_but_irrelevant_evidence_becomes_labelled_general_answer(co
 async def test_weak_retrieval_general_fallback_is_labelled_and_reference_free(conn):
     await conn.execute(
         """UPDATE ask_source_policies SET allow_general=TRUE
-           WHERE class_id IS NULL AND subject_id IS NULL"""
+               WHERE class_id='class-9' AND subject_id='physics'"""
     )
     provider = FakeProvider(
         {
@@ -745,6 +759,7 @@ async def test_provider_failure_refunds_and_keeps_no_reusable_answer(conn):
         ),
         "strong",
     )
+    ask_request = request()
     with pytest.raises(AskServiceError, match="provider_unavailable"):
         await AskService(
             conn,
@@ -752,9 +767,16 @@ async def test_provider_failure_refunds_and_keeps_no_reusable_answer(conn):
             provider=provider,
             usage=usage,
             prompt_service=FakePrompts(),
-        ).ask(request(), uid="student", tier=AccountTier.ANONYMOUS)
+        ).ask(ask_request, uid="student", tier=AccountTier.ANONYMOUS)
     assert usage.refunded == 1
-    assert await conn.fetchval("SELECT COUNT(*) FROM ai_answers") == 0
+    assert (
+        await conn.fetchval(
+            """SELECT COUNT(*) FROM ai_answers a JOIN ai_requests r ON r.id=a.request_id
+               WHERE r.client_request_id=$1::uuid""",
+            str(ask_request.request_id),
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -777,7 +799,7 @@ async def test_candidate_approval_retains_and_links_original_candidate(conn):
     candidate_request = await asks.create_pending(
         client_request_id=str(uuid.uuid4()),
         uid_hash="c" * 64,
-        board_id="punjab",
+        board_id=TEST_BOARD,
         class_id="class-9",
         subject_id="physics",
         chapter_id="chapter-1",

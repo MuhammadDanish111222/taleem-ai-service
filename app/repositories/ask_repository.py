@@ -82,6 +82,62 @@ class AskRepository:
         result["_newly_created"] = newly_created
         return result
 
+    async def create_pending_multiple_ask(
+        self,
+        *,
+        client_request_id: str,
+        uid_hash: str,
+        board_id: str,
+        class_id: str,
+        subject_id: str,
+        chapter_id: str | None,
+        answer_mode: str,
+        raw_question: str,
+        normalized_question: str,
+        question_hash: str,
+    ) -> dict[str, Any]:
+        """Create the one reviewable candidate request for a durable paper item.
+
+        This intentionally has no usage reservation: Run 1 already committed the
+        one batch quota before extraction.  The deterministic client request id
+        supplied by the caller makes restarts return this exact row rather than
+        creating another candidate.
+        """
+        row = await self.conn.fetchrow(
+            """INSERT INTO ai_requests(
+                 client_request_id,uid_hash,board_id,class_id,subject_id,chapter_id,
+                 language,answer_mode,answer_style,raw_question,normalized_question,
+                 question_hash,prompt_version,status,source_feature,
+                 normalization_version,retention_expires_at
+               ) VALUES(
+                 $1::uuid,$2,$3,$4,$5,$6,'en',$7,'exam_style',$8,$9,$10,
+                 'unresolved','pending','multiple_ask',1,NOW()+INTERVAL '7 days'
+               ) ON CONFLICT DO NOTHING RETURNING *""",
+            client_request_id,
+            uid_hash,
+            board_id,
+            class_id,
+            subject_id,
+            chapter_id,
+            answer_mode,
+            raw_question,
+            normalized_question,
+            question_hash,
+        )
+        newly_created = row is not None
+        if row is None:
+            row = await self.conn.fetchrow(
+                """SELECT * FROM ai_requests
+                   WHERE client_request_id=$1::uuid AND uid_hash=$2""",
+                client_request_id,
+                uid_hash,
+            )
+        if row is None:
+            raise RuntimeError("MULTIPLE_ASK_CANDIDATE_CREATE_FAILED")
+        result = dict(row)
+        result["_newly_created"] = newly_created
+        return result
+
     async def complete(
         self,
         *,
@@ -267,6 +323,54 @@ class AskRepository:
             or not row["storage_key"]
             or not row["storage_key"].strip()
         ):
+            return None
+        return {
+            "storage_provider": row["storage_provider"],
+            "storage_key": row["storage_key"],
+        }
+
+    async def multiple_ask_visual_stream_reference(
+        self, *, job_id: str, uid_hash: str, visual_id: str
+    ) -> dict[str, str] | None:
+        """Resolve a reviewed visual only when it belongs to this student's job."""
+
+        rows = await self.conn.fetch(
+            """WITH selected_answer AS (
+                 SELECT r.corpus_version_id,a.approved_revision_id
+                 FROM multiple_ask_jobs j
+                 JOIN multiple_ask_job_items i ON i.multiple_ask_job_id=j.id
+                 JOIN ai_answers a ON a.id=i.ai_answer_id
+                 JOIN ai_requests r ON r.id=a.request_id
+                 WHERE j.id=$1::uuid AND j.uid_hash=$2
+                   AND i.item_status='answered' AND r.status='completed'
+                   AND a.visual_ids @> jsonb_build_array($3::text)
+               ),
+               eligible AS (
+                 SELECT v.storage_provider,v.storage_key
+                 FROM selected_answer s
+                 JOIN rag_chunks c ON c.corpus_version_id=s.corpus_version_id
+                 JOIN rag_visuals v ON v.chunk_id=c.id AND v.visual_id=$3
+                 WHERE s.approved_revision_id IS NULL
+                   AND v.review_status='approved'
+                   AND v.display_policy IN ('always','llm_decide')
+                 UNION ALL
+                 SELECT v.storage_provider,v.storage_key
+                 FROM selected_answer s
+                 JOIN question_bank_revision_visuals l
+                   ON l.revision_id=s.approved_revision_id
+                 JOIN rag_visuals v ON v.id=l.visual_id AND v.visual_id=$3
+                 WHERE v.review_status='approved'
+                   AND v.display_policy IN ('always','llm_decide')
+               )
+               SELECT storage_provider,storage_key FROM eligible LIMIT 2""",
+            job_id,
+            uid_hash,
+            visual_id,
+        )
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        if row["storage_provider"] != "google_drive" or not row["storage_key"]:
             return None
         return {
             "storage_provider": row["storage_provider"],

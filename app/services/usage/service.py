@@ -112,8 +112,47 @@ class UsageService:
         tier: AccountTier,
         feature: str = "single_question",
     ) -> UsageReservation:
+        return await self._reserve_for_uid_hash(
+            conn,
+            request_id=request_id,
+            uid_hash=self.uid_hash(uid),
+            tier=tier,
+            feature=feature,
+        )
+
+    async def reserve_for_uid_hash(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        request_id: str,
+        uid_hash: str,
+        tier: AccountTier,
+        feature: str,
+    ) -> UsageReservation:
+        """Worker-only reservation using the stored HMAC identity, never a raw UID."""
+        if len(uid_hash) != 64 or any(
+            char not in "0123456789abcdef" for char in uid_hash
+        ):
+            raise ValueError("USAGE_UID_HASH_INVALID")
+        return await self._reserve_for_uid_hash(
+            conn,
+            request_id=request_id,
+            uid_hash=uid_hash,
+            tier=tier,
+            feature=feature,
+        )
+
+    async def _reserve_for_uid_hash(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        request_id: str,
+        uid_hash: str,
+        tier: AccountTier,
+        feature: str,
+    ) -> UsageReservation:
         window = pakistan_business_window(self._now)
-        safe_uid = self.uid_hash(uid)
+        safe_uid = uid_hash
         policy = await self._policy_cache.get(conn, feature, tier)
         request_key, counter_key = self._keys(
             request_id=request_id,
@@ -285,6 +324,49 @@ class UsageService:
                     "usage_refund_redis_unavailable",
                     extra={"event": "redis_refund_unavailable"},
                 )
+
+    async def refund_committed(
+        self, conn: asyncpg.Connection, request_id: str, uid_hash: str
+    ) -> bool:
+        """Refund a committed durable batch exactly once after infrastructure failure.
+
+        Normal Ask calls refund a still-reserved request. Multiple Ask commits
+        after validation, so its exhausted OCR/extraction path needs an explicit
+        committed-refund method instead of weakening ordinary Ask semantics.
+        """
+        row = await conn.fetchrow(
+            """UPDATE usage_reservations SET status='refunded', updated_at=NOW()
+               WHERE request_id=$1::uuid AND uid_hash=$2 AND status='committed'
+               RETURNING business_date,feature,uid_hash,backend""",
+            request_id,
+            uid_hash,
+        )
+        if row is None:
+            return False
+        await conn.execute(
+            """UPDATE daily_usage SET used=GREATEST(used-1,0), updated_at=NOW()
+               WHERE business_date=$1 AND feature=$2 AND uid_hash=$3""",
+            row["business_date"],
+            row["feature"],
+            row["uid_hash"],
+        )
+        if row["backend"] == "redis":
+            request_key, counter_key = self._keys(
+                request_id=request_id,
+                uid_hash=row["uid_hash"],
+                feature=row["feature"],
+                business_date=row["business_date"].isoformat(),
+            )
+            try:
+                await asyncio.to_thread(
+                    self._client().eval, _REFUND_LUA, 2, request_key, counter_key
+                )
+            except Exception:
+                logger.warning(
+                    "usage_committed_refund_redis_unavailable",
+                    extra={"event": "redis_refund_unavailable"},
+                )
+        return True
 
     async def snapshot(
         self,

@@ -24,10 +24,13 @@ LOCAL_ADMIN_JOB_TYPES = frozenset(
         "question_bank_embeddings",
     }
 )
-# Phase 3D intentionally gives Railway no durable job types.  The bounded
-# on-demand query-embedding path belongs to Phase 3E and must register its own
-# tested handler before it is added here.
-RAILWAY_PUBLIC_JOB_TYPES = frozenset()
+# Railway alone owns the Module 5 student-input validation marker. Its Run 1
+# handler reads bounded private bytes for canonical validation. Run 2's separate
+# extraction handler reads those same temporary sources with local Tesseract.
+# Local-admin ingestion remains strictly separate.
+RAILWAY_PUBLIC_JOB_TYPES = frozenset(
+    {"multiple_ask_validate", "multiple_ask_extract", "multiple_ask_answer"}
+)
 
 
 class WorkerModeConfigurationError(RuntimeError):

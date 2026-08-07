@@ -23,7 +23,13 @@ from app.services.ingestion.embed_question_bank import (
 )
 from app.services.ingestion.embed_questions import handle_embed_questions
 from app.services.jobs.queue import JobQueueService
+from app.services.multiple_ask import MultipleAskRetentionService
+from app.services.multiple_ask_answers import MultipleAskAnswerService
+from app.services.multiple_ask_extraction_service import MultipleAskExtractionService
 from app.workers.handlers.jsonl_ingest import handle_jsonl_ingest
+from app.workers.handlers.multiple_ask_answer import handle_multiple_ask_answer
+from app.workers.handlers.multiple_ask_extract import handle_multiple_ask_extract
+from app.workers.handlers.multiple_ask_validate import handle_multiple_ask_validate
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
@@ -101,6 +107,15 @@ class Worker:
                 pass
 
         stale_recovery_task = asyncio.create_task(self._stale_recovery_loop(pool))
+        multiple_ask_cleanup_task: asyncio.Task[None] | None = None
+        if "multiple_ask_validate" in self.supported_types:
+            # Retention must continue even if the public feature is toggled
+            # off after uploads were accepted.  Only the Railway-owned worker
+            # can run it because it is the only process allowed to touch these
+            # temporary student sources.
+            multiple_ask_cleanup_task = asyncio.create_task(
+                self._multiple_ask_cleanup_loop(pool)
+            )
 
         try:
             while self.running:
@@ -123,6 +138,8 @@ class Worker:
                         await asyncio.sleep(self.poll_interval)
         finally:
             stale_recovery_task.cancel()
+            if multiple_ask_cleanup_task is not None:
+                multiple_ask_cleanup_task.cancel()
             await pool.close()
             logger.info(f"Worker '{self.worker_id}' stopped cleanly.")
 
@@ -149,6 +166,25 @@ class Worker:
                 break
             except Exception as e:
                 logger.error(f"Error in stale recovery loop: {e}")
+
+    async def _multiple_ask_cleanup_loop(self, pool: asyncpg.Pool) -> None:
+        """Run bounded temporary-source cleanup without stopping job leasing."""
+        interval = get_settings().MULTIPLE_ASK_CLEANUP_INTERVAL_SECONDS
+        while self.running:
+            try:
+                async with pool.acquire() as conn:
+                    counts = await MultipleAskRetentionService(conn).cleanup_once(
+                        run_id=str(uuid.uuid4())
+                    )
+                if any(counts.values()):
+                    logger.info("Multiple Ask retention cleanup: %s", counts)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                # A missing migration or transient Storage failure must not
+                # terminate the Railway worker or prevent normal job handling.
+                logger.error("Multiple Ask retention cleanup failed: %s", exc)
+            await asyncio.sleep(interval)
 
     async def _process_job(self, pool: asyncpg.Pool, job: Dict[str, Any]):
         job_id = str(job["id"])
@@ -231,6 +267,24 @@ class Worker:
                     error_message=str(err),
                     retry_delay_seconds=5,
                 )
+                failed = await service.get_job(job_id)
+                session_id = (job.get("payload") or {}).get("multiple_ask_session_id")
+                if (
+                    job_type in {"multiple_ask_validate", "multiple_ask_extract"}
+                    and failed is not None
+                    and failed["status"] == "failed"
+                    and isinstance(session_id, str)
+                ):
+                    await MultipleAskExtractionService(conn).mark_queue_failure(
+                        session_id
+                    )
+                if (
+                    job_type == "multiple_ask_answer"
+                    and failed is not None
+                    and failed["status"] == "failed"
+                    and isinstance(session_id, str)
+                ):
+                    await MultipleAskAnswerService(conn).mark_queue_failure(session_id)
         finally:
             heartbeat_running = False
             hb_task.cancel()
@@ -248,6 +302,9 @@ register_handler("embed_chunks", handle_embed_chunks)
 register_handler("embed_questions", handle_embed_questions)
 register_handler("corpus_completeness", handle_corpus_completeness)
 register_handler("question_bank_embeddings", handle_question_bank_embeddings)
+register_handler("multiple_ask_validate", handle_multiple_ask_validate)
+register_handler("multiple_ask_extract", handle_multiple_ask_extract)
+register_handler("multiple_ask_answer", handle_multiple_ask_answer)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":

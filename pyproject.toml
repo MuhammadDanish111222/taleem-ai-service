@@ -19,6 +19,10 @@ dependencies = [
     "transformers>=4.44.0",
     "torch>=2.5.0",
     "onnxruntime>=1.23.0,<2",
+    "pypdf>=5.0.0,<7",
+    "pillow>=10.0.0,<12",
+    "pymupdf>=1.24,<2",
+    "pytesseract>=0.3.10,<0.4",
 ]
 
 [dependency-groups]

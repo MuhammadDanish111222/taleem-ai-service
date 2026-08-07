@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +33,33 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_REVISION: str = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
     EMBEDDING_DIM: int = 768
     WORKER_MODE: str = ""
+    # Module 5 Run 1 is intentionally dark until its complete worker flow is
+    # introduced and separately verified. This gate applies to all internals.
+    MULTIPLE_ASK_RUN1_ENABLED: bool = False
+    MULTIPLE_ASK_TEMPORARY_BUCKET: str = "multiple-ask-temporary"
+    MULTIPLE_ASK_SESSION_TTL_SECONDS: int = 900
+    # Raw source follows finalization, not the short upload capability.
+    MULTIPLE_ASK_RAW_SOURCE_RETENTION_HOURS: int = 24
+    MULTIPLE_ASK_JOB_RETENTION_DAYS: int = 7
+    MULTIPLE_ASK_MAX_IMAGE_BYTES: int = 8 * 1024 * 1024
+    MULTIPLE_ASK_MAX_PDF_BYTES: int = 15 * 1024 * 1024
+    MULTIPLE_ASK_MAX_TEXT_CHARACTERS: int = 30_000
+    MULTIPLE_ASK_MAX_PDF_PAGES: int = 10
+    # A compressed image can expand far beyond its 8 MB upload size.  Keep the
+    # validation worker within a predictable memory budget before OCR exists.
+    MULTIPLE_ASK_MAX_IMAGE_PIXELS: int = 20_000_000
+    # PDFs with embedded text are checked before quota is committed.  A scanned
+    # PDF legitimately has no embedded text and is still eligible for Run 2 OCR.
+    MULTIPLE_ASK_MAX_PDF_EXTRACTED_CHARACTERS: int = 30_000
+    # This is a hard safety ceiling, not merely a UI preference. Deployments
+    # may choose a lower value but cannot increase a student paper past 60.
+    MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS: int = Field(default=60, ge=1, le=60)
+    MULTIPLE_ASK_OCR_TIMEOUT_SECONDS: int = 20
+    # PDF page dimensions are attacker-controlled. Rendering one page at a
+    # time is not sufficient unless its rendered pixel count is bounded too.
+    MULTIPLE_ASK_MAX_RENDERED_PDF_PAGE_PIXELS: int = 12_000_000
+    MULTIPLE_ASK_CLEANUP_BATCH_SIZE: int = 100
+    MULTIPLE_ASK_CLEANUP_INTERVAL_SECONDS: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

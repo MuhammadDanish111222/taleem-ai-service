@@ -1,5 +1,16 @@
 # Taleem AI Service - Progress Log
 
+## Module 5 Run 4 frontend integration
+
+- **Status:** Run 4 adds only a narrow job-owned approved-visual proxy lookup to the existing Runs 1–3 contracts; no processing-pipeline or migration change was required. Module 5 is implemented locally but production enablement/staging remains pending.
+- **Verification:** Focused Multiple Ask service regressions passed (`35 passed`), along with `uv run ruff check .`, `uv run ruff format --check .`, and `git diff --check`.
+- **Release state:** `MULTIPLE_ASK_RUN1_ENABLED=false` remains mandatory. No production deployment, real student upload, OCR, paid LLM call, commit, or push was performed.
+
+## Module 5 — Multiple Ask, Runs 1–3
+
+- **Status:** Runs 1–3 are complete and remain dark by default. Migrations `0010`–`0014` are applied and the real database schema/RLS suite passes. Module 5 overall remains incomplete pending Run 4 student UI work. No Multiple Ask upload, paid provider call, deployment, commit, or push was performed.
+- **Scope:** Run 3 adds Railway-owned durable item answering: approved-bank exact/variation reuse and Module 4 retrieval/grounded/general behavior for short/long items; deterministic bounded general-knowledge MCQ groups; pending `ai_requests`/`ai_answers` candidates; immutable approved-revision provenance; restart-safe item completion; and safe result polling. The feature flag remains `MULTIPLE_ASK_RUN1_ENABLED=false`.
+
 ## Module 4 — Long-answer completeness hardening
 
 - **Implemented:** Short grounded answers now send one complete highest-ranked subtopic. Long answers send that complete subtopic plus at most one independently supported second subtopic from a five-result anchor window. Both are capped at twelve chunks; short and long character limits remain 12,000 and 24,000 respectively.
