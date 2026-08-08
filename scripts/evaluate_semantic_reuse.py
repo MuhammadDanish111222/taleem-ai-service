@@ -1,4 +1,4 @@
-"""Offline precision-first semantic-reuse evaluation with the locked BGE model.
+"""Offline precision-first semantic-reuse evaluation with the locked Voyage model.
 
 This harness never changes policy or writes to PostgreSQL. Its report is
 evidence for an administrator; enabling semantic reuse remains a separate,
@@ -8,12 +8,14 @@ explicit decision after evaluating real approved-bank data.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import inspect
 import json
 import math
 from pathlib import Path
 from typing import Any
 
-from app.providers.embeddings.bge import BGEEmbeddingProvider
+from app.providers.embeddings.voyage import VoyageEmbeddingProvider
 
 REQUIRED_CATEGORIES = {
     "positive_paraphrase",
@@ -44,7 +46,7 @@ def _same_candidate_scope(case: dict[str, Any], item: dict[str, Any]) -> bool:
 
 
 def evaluate(
-    payload: dict[str, Any], provider: BGEEmbeddingProvider | None = None
+    payload: dict[str, Any], provider: VoyageEmbeddingProvider | None = None
 ) -> dict[str, Any]:
     approved = payload.get("approved")
     cases = payload.get("cases")
@@ -57,9 +59,18 @@ def evaluate(
     if missing:
         raise ValueError(f"SEMANTIC_CASE_CATEGORIES_MISSING:{','.join(missing)}")
 
-    provider = provider or BGEEmbeddingProvider()
-    document_vectors = provider.embed_documents([item["text"] for item in approved])
-    query_vectors = provider.embed_queries([case["query"] for case in cases])
+    provider = provider or VoyageEmbeddingProvider()
+    doc_fn = provider.embed_documents
+    query_fn = provider.embed_queries
+    if inspect.iscoroutinefunction(doc_fn):
+        document_vectors = asyncio.run(doc_fn([item["text"] for item in approved]))
+    else:
+        document_vectors = doc_fn([item["text"] for item in approved])
+    if inspect.iscoroutinefunction(query_fn):
+        query_vectors = asyncio.run(query_fn([case["query"] for case in cases]))
+    else:
+        query_vectors = query_fn([case["query"] for case in cases])
+
     observations: list[dict[str, Any]] = []
     for case, query_vector in zip(cases, query_vectors, strict=True):
         candidates = [

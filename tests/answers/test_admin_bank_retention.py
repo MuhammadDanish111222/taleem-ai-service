@@ -33,7 +33,10 @@ def test_admin_list_contract_preserves_optional_chapter_filter():
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     transaction = connection.transaction()
     await transaction.start()
     try:

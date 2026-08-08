@@ -8,8 +8,8 @@ from typing import Any, Dict, Protocol
 
 import asyncpg
 
-from app.providers.embeddings.bge import (
-    BGEEmbeddingProvider,
+from app.providers.embeddings.voyage import (
+    VoyageEmbeddingProvider,
     embedding_input_hash,
     format_chunk_embedding_input,
 )
@@ -20,7 +20,7 @@ class DocumentEmbeddingProvider(Protocol):
     configuration_fingerprint: str
     configuration: Any
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
 
 
 def _requires_embedding(row: Dict[str, Any], input_hash: str, provider: Any) -> bool:
@@ -39,10 +39,10 @@ async def embed_chunks(
     configuration_fingerprint: str,
     conn: asyncpg.Connection,
     provider: DocumentEmbeddingProvider | None = None,
-    batch_size: int = 16,
+    batch_size: int = 64,
 ) -> Dict[str, int]:
     """Embeds only missing/stale chunk rows; existing valid vectors are untouched."""
-    provider = provider or BGEEmbeddingProvider()
+    provider = provider or VoyageEmbeddingProvider(input_type="document", batch_size=batch_size)
     if provider.configuration_fingerprint != configuration_fingerprint:
         raise ValueError("EMBEDDING_CONFIGURATION_MISMATCH_REQUIRES_NEW_CORPUS_VERSION")
     repo = RagRepository(conn)
@@ -77,9 +77,12 @@ async def embed_chunks(
     for start in range(0, len(candidates), batch_size):
         batch = candidates[start : start + batch_size]
         try:
-            vectors = await asyncio.to_thread(
-                provider.embed_documents, [item[1] for item in batch]
-            )
+            if asyncio.iscoroutinefunction(provider.embed_documents):
+                vectors = await provider.embed_documents([item[1] for item in batch])
+            else:
+                vectors = await asyncio.to_thread(
+                    provider.embed_documents, [item[1] for item in batch]
+                )
             if len(vectors) != len(batch):
                 raise ValueError(
                     "Embedding provider returned an unexpected chunk vector count."

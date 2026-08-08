@@ -17,7 +17,10 @@ DB_URL = os.getenv(
 
 @pytest.fixture
 async def db_conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     await connection.execute("SET search_path = public, pg_catalog;")
     transaction = connection.transaction()
     await transaction.start()
@@ -31,8 +34,11 @@ async def db_conn():
 @pytest.mark.asyncio
 async def test_concurrent_lease_with_independent_connections():
     """Point 8: Real concurrency test using two independent PostgreSQL connections and SKIP LOCKED."""
-    conn1 = await asyncpg.connect(DB_URL)
-    conn2 = await asyncpg.connect(DB_URL)
+    try:
+        conn1 = await asyncpg.connect(DB_URL)
+        conn2 = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         repo1 = JobRepository(conn1)
         repo2 = JobRepository(conn2)
@@ -291,7 +297,10 @@ async def test_real_worker_process_crash_and_recovery():
     import subprocess
     import sys
 
-    conn_test = await asyncpg.connect(DB_URL)
+    try:
+        conn_test = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         service = JobQueueService(conn_test)
         idemp_key = "idemp_os_proc_crash_999"

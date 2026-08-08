@@ -153,7 +153,7 @@ class QuestionBankRepository:
             return None
         rows = await self.conn.fetch(
             """WITH candidates AS (
-                 SELECT r.*, r.embedding <=> $6::text::vector AS distance
+                 SELECT r.*, r.embedding <=> $6::text::halfvec AS distance
                  FROM question_bank_revisions r
                  WHERE r.board_id=$1 AND r.class_id=$2 AND r.subject_id=$3
                    AND ($4::text IS NULL OR r.chapter_id=$4)
@@ -161,7 +161,7 @@ class QuestionBankRepository:
                    AND r.review_status='approved' AND r.superseded_at IS NULL
                    AND r.embedding_status='embedded' AND r.embedding IS NOT NULL
                  UNION ALL
-                 SELECT r.*, v.embedding <=> $6::text::vector AS distance
+                 SELECT r.*, v.embedding <=> $6::text::halfvec AS distance
                  FROM question_bank_variations v
                  JOIN question_bank_revisions r ON r.id=v.revision_id
                  WHERE r.board_id=$1 AND r.class_id=$2 AND r.subject_id=$3

@@ -8,12 +8,12 @@ from typing import Any
 
 import asyncpg
 
-from app.providers.embeddings.bge import BGEEmbeddingProvider
+from app.providers.embeddings.voyage import VoyageEmbeddingProvider
 
 
 @lru_cache(maxsize=1)
-def _provider() -> BGEEmbeddingProvider:
-    return BGEEmbeddingProvider()
+def _provider() -> VoyageEmbeddingProvider:
+    return VoyageEmbeddingProvider(input_type="document")
 
 
 async def handle_question_bank_embeddings(
@@ -48,9 +48,12 @@ async def handle_question_bank_embeddings(
     if not rows:
         return {"embedded": 0}
     provider = _provider()
-    vectors = await asyncio.to_thread(
-        provider.embed_documents, [row["text_value"] for row in rows]
-    )
+    if asyncio.iscoroutinefunction(provider.embed_documents):
+        vectors = await provider.embed_documents([row["text_value"] for row in rows])
+    else:
+        vectors = await asyncio.to_thread(
+            provider.embed_documents, [row["text_value"] for row in rows]
+        )
     async with conn.transaction():
         for row, vector in zip(rows, vectors, strict=True):
             table = (
@@ -60,7 +63,7 @@ async def handle_question_bank_embeddings(
             )
             await conn.execute(
                 f"""UPDATE {table}
-                    SET embedding=$2::text::vector,embedding_model=$3,
+                    SET embedding=$2::text::halfvec,embedding_model=$3,
                         embedding_revision=$4,embedding_config_fingerprint=$5,
                         embedding_status='embedded'
                     WHERE id=$1::uuid""",

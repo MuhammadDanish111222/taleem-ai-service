@@ -46,5 +46,5 @@ async def test_scanned_pdf_page_is_rendered_and_ocrd_one_page_at_a_time():
     assert normalized == "1. Define velocity."
     assert kind == "pdf_ocr"
     assert locators == [{"page_number": 1, "source_kind": "ocr"}]
-    assert provider == "tesseract"
+    assert provider == "gemini"
     assert len(fake.calls) == 1 and fake.calls[0].startswith(b"\x89PNG\r\n\x1a\n")

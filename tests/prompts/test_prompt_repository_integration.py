@@ -18,7 +18,10 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/15")
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     transaction = connection.transaction()
     await transaction.start()
     try:

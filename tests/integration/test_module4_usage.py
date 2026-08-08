@@ -28,7 +28,10 @@ def usage_secrets(monkeypatch):
 
 
 async def _reserve(uid: str, request_id: str, *, redis_client=None):
-    conn = await asyncpg.connect(DB_URL)
+    try:
+        conn = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("Disposable PostgreSQL is unavailable")
     try:
         async with conn.transaction():
             return await UsageService(redis_client=redis_client).reserve(
@@ -110,6 +113,12 @@ class FailingRedis:
 
 @pytest.mark.asyncio
 async def test_redis_failure_uses_guarded_postgres_fallback():
+    try:
+        probe = await asyncpg.connect(DB_URL)
+        await probe.close()
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("Disposable PostgreSQL is unavailable")
+
     uid = f"fallback-{uuid.uuid4()}"
     results = await asyncio.gather(
         *(

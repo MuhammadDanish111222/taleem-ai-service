@@ -10,7 +10,7 @@ import pytest
 from pgvector.asyncpg import register_vector
 
 from app.core.worker_modes import WorkerMode, owned_job_types
-from app.providers.embeddings.bge import BGEEmbeddingConfiguration
+from app.providers.embeddings.voyage import VoyageEmbeddingConfiguration
 from app.repositories.rag_repository import RagRepository
 from app.services.retrieval.evidence import (
     Citation,
@@ -23,13 +23,13 @@ from app.services.retrieval.fusion import RankedChannelHit, fuse_ranked_hits
 from app.services.retrieval.service import (
     RetrievalConfigurationError,
     RetrievalService,
-    _cached_bge_provider,
+    _cached_voyage_provider,
 )
 
 
 @dataclass
 class FakeQueryEmbeddingProvider:
-    configuration: BGEEmbeddingConfiguration
+    configuration: VoyageEmbeddingConfiguration
     vector: list[float]
 
     @property
@@ -62,20 +62,20 @@ async def conn():
 
 
 def _vector(index: int = 0) -> list[float]:
-    value = [0.0] * 768
+    value = [0.0] * 512
     value[index] = 1.0
     return value
 
 
 def test_default_query_provider_is_reused_within_the_service_process():
-    configuration = BGEEmbeddingConfiguration()
-    _cached_bge_provider.cache_clear()
+    configuration = VoyageEmbeddingConfiguration()
+    _cached_voyage_provider.cache_clear()
     try:
-        assert _cached_bge_provider(configuration) is _cached_bge_provider(
+        assert _cached_voyage_provider(configuration) is _cached_voyage_provider(
             configuration
         )
     finally:
-        _cached_bge_provider.cache_clear()
+        _cached_voyage_provider.cache_clear()
 
 
 async def _activate_corpus(
@@ -88,7 +88,7 @@ async def _activate_corpus(
     chunks,
 ):
     repo = RagRepository(conn)
-    configuration = BGEEmbeddingConfiguration()
+    configuration = VoyageEmbeddingConfiguration()
     version = await repo.get_or_create_building_corpus_version(
         board,
         class_id,
@@ -98,7 +98,7 @@ async def _activate_corpus(
         configuration.dimensions,
         configuration.fingerprint(),
         configuration.normalize,
-        configuration.query_instruction,
+        None,
     )
     document = await repo.create_document_version(
         str(version["id"]), f"resource-{suffix}", "v1", "admin_jsonl_v1", suffix
@@ -432,5 +432,6 @@ def test_approved_evidence_policy_uses_only_top_parent_channel_ranks():
     assert top_only_policy.strength is EvidenceStrength.WEAK
 
 
-def test_railway_public_still_owns_no_durable_jobs():
-    assert owned_job_types(WorkerMode.RAILWAY_PUBLIC) == frozenset()
+def test_railway_public_owns_no_admin_ingestion_jobs():
+    from app.core.worker_modes import LOCAL_ADMIN_JOB_TYPES
+    assert owned_job_types(WorkerMode.RAILWAY_PUBLIC).isdisjoint(LOCAL_ADMIN_JOB_TYPES)

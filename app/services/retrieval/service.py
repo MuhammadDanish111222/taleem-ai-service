@@ -1,4 +1,4 @@
-"""On-demand, internal-only orchestration for Phase 3E retrieval."""
+"""On-demand, internal-only orchestration for Phase 3E retrieval with Voyage halfvec(512)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ from typing import Any, Protocol
 
 import asyncpg
 
-from app.providers.embeddings.bge import BGEEmbeddingConfiguration, BGEEmbeddingProvider
+from app.providers.embeddings.voyage import (
+    VoyageEmbeddingConfiguration,
+    VoyageEmbeddingProvider,
+)
 from app.repositories.rag_repository import RagRepository
 from app.services.retrieval.active_version_cache import (
     ActiveCorpusVersionCache,
@@ -28,10 +31,10 @@ from app.services.retrieval.fusion import RankedChannelHit, fuse_ranked_hits
 
 
 class QueryEmbeddingProvider(Protocol):
-    configuration: BGEEmbeddingConfiguration
+    configuration: VoyageEmbeddingConfiguration
     configuration_fingerprint: str
 
-    def embed_queries(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed_queries(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class RetrievalConfigurationError(RuntimeError):
@@ -43,11 +46,11 @@ class RetrievalScopeError(ValueError):
 
 
 @lru_cache(maxsize=4)
-def _cached_bge_provider(
-    configuration: BGEEmbeddingConfiguration,
-) -> BGEEmbeddingProvider:
-    """Reuse loaded model weights for repeated query embeddings in one process."""
-    return BGEEmbeddingProvider(configuration)
+def _cached_voyage_provider(
+    configuration: VoyageEmbeddingConfiguration,
+) -> VoyageEmbeddingProvider:
+    """Reuse cached provider for query embeddings with VOYAGE_API_KEY."""
+    return VoyageEmbeddingProvider(configuration, input_type="query")
 
 
 class RetrievalService:
@@ -56,7 +59,7 @@ class RetrievalService:
     def __init__(
         self,
         conn: asyncpg.Connection,
-        provider_factory: Callable[[BGEEmbeddingConfiguration], QueryEmbeddingProvider]
+        provider_factory: Callable[[VoyageEmbeddingConfiguration], QueryEmbeddingProvider]
         | None = None,
         *,
         dense_top_k: int = 10,
@@ -67,7 +70,7 @@ class RetrievalService:
         if min(dense_top_k, expected_question_top_k, lexical_top_k) < 1:
             raise ValueError("RETRIEVAL_TOP_K_MUST_BE_POSITIVE")
         self._repo = RagRepository(conn)
-        self._provider_factory = provider_factory or _cached_bge_provider
+        self._provider_factory = provider_factory or _cached_voyage_provider
         self._dense_top_k = dense_top_k
         self._expected_question_top_k = expected_question_top_k
         self._lexical_top_k = lexical_top_k
@@ -75,7 +78,55 @@ class RetrievalService:
             active_version_cache or get_active_corpus_version_cache()
         )
 
-    async def retrieve(self, question: str, scope: RetrievalScope) -> EvidenceResult:
+    def _configuration_from_active_version(
+        self, active_version: dict[str, Any]
+    ) -> VoyageEmbeddingConfiguration:
+        return VoyageEmbeddingConfiguration(
+            model=active_version["embedding_model"],
+            revision=active_version["embedding_revision"],
+            dimensions=active_version["embedding_dim"],
+        )
+
+    async def embed_live_query(
+        self, question: str, scope: RetrievalScope
+    ) -> list[float] | None:
+        """Generates a single 512-dim live query vector on Railway using VOYAGE_API_KEY."""
+        normalized = " ".join(question.split())
+        if not normalized:
+            raise ValueError("RETRIEVAL_QUESTION_BLANK")
+        active_version = await self._active_version_cache.get(
+            scope.board_id, scope.class_id, scope.subject_id
+        )
+        if active_version is None:
+            active_version = await self._repo.get_active_corpus_version(
+                scope.board_id, scope.class_id, scope.subject_id
+            )
+        if active_version is None:
+            return None
+        configuration = self._configuration_from_active_version(active_version)
+        provider = self._provider_factory(configuration)
+        if provider.configuration_fingerprint != configuration.fingerprint():
+            raise RetrievalConfigurationError("QUERY_PROVIDER_CONFIGURATION_MISMATCH")
+        if asyncio.iscoroutinefunction(provider.embed_queries):
+            vectors = await provider.embed_queries([normalized])
+        else:
+            vectors = await asyncio.to_thread(provider.embed_queries, [normalized])
+        if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
+            raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
+        return vectors[0]
+
+    async def embed_query_for_approved_reuse(
+        self, question: str, scope: RetrievalScope
+    ) -> list[float] | None:
+        """Embed only when an evaluated semantic-reuse policy explicitly enables it."""
+        return await self.embed_live_query(question, scope)
+
+    async def retrieve(
+        self,
+        question: str,
+        scope: RetrievalScope,
+        query_vector: list[float] | None = None,
+    ) -> EvidenceResult:
         """Run all three channels without logging question text or provider output."""
         active_version = await self._active_version_cache.get(
             scope.board_id, scope.class_id, scope.subject_id
@@ -94,32 +145,8 @@ class RetrievalService:
         if active_version is None:
             return classify_evidence(())
         return await self._retrieve_version(
-            question, scope, active_version, allow_named_draft=False
+            question, scope, active_version, query_vector=query_vector, allow_named_draft=False
         )
-
-    async def embed_query_for_approved_reuse(
-        self, question: str, scope: RetrievalScope
-    ) -> list[float] | None:
-        """Embed only when an evaluated semantic-reuse policy explicitly enables it."""
-        active_version = await self._active_version_cache.get(
-            scope.board_id, scope.class_id, scope.subject_id
-        )
-        if active_version is None:
-            active_version = await self._repo.get_active_corpus_version(
-                scope.board_id, scope.class_id, scope.subject_id
-            )
-        if active_version is None:
-            return None
-        configuration = self._configuration_from_active_version(active_version)
-        provider = self._provider_factory(configuration)
-        if provider.configuration_fingerprint != configuration.fingerprint():
-            raise RetrievalConfigurationError("QUERY_PROVIDER_CONFIGURATION_MISMATCH")
-        vectors = await asyncio.to_thread(
-            provider.embed_queries, [" ".join(question.split())]
-        )
-        if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
-            raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
-        return vectors[0]
 
     async def retrieve_named_version(
         self, question: str, scope: RetrievalScope, corpus_version_id: str
@@ -139,7 +166,7 @@ class RetrievalService:
         if not scoped:
             raise RetrievalScopeError("QA_CORPUS_VERSION_OUTSIDE_SCOPE")
         return await self._retrieve_version(
-            question, scope, version, allow_named_draft=True
+            question, scope, version, query_vector=None, allow_named_draft=True
         )
 
     async def _retrieve_version(
@@ -148,6 +175,7 @@ class RetrievalService:
         scope: RetrievalScope,
         active_version: dict[str, Any],
         *,
+        query_vector: list[float] | None = None,
         allow_named_draft: bool,
     ) -> EvidenceResult:
         normalized_question = " ".join(question.split())
@@ -177,20 +205,20 @@ class RetrievalService:
             raise RetrievalScopeError("CHAPTER_NOT_IN_ACTIVE_CORPUS")
 
         configuration = self._configuration_from_active_version(active_version)
-        provider = self._provider_factory(configuration)
-        if provider.configuration_fingerprint != configuration.fingerprint():
-            raise RetrievalConfigurationError("QUERY_PROVIDER_CONFIGURATION_MISMATCH")
-
-        # Model inference is bounded and on-demand, but still kept off FastAPI's
-        # event loop. It is intentionally not represented by a durable worker job.
-        vectors = await asyncio.to_thread(provider.embed_queries, [normalized_question])
-        if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
+        if query_vector is None:
+            provider = self._provider_factory(configuration)
+            if provider.configuration_fingerprint != configuration.fingerprint():
+                raise RetrievalConfigurationError("QUERY_PROVIDER_CONFIGURATION_MISMATCH")
+            if asyncio.iscoroutinefunction(provider.embed_queries):
+                vectors = await provider.embed_queries([normalized_question])
+            else:
+                vectors = await asyncio.to_thread(provider.embed_queries, [normalized_question])
+            if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
+                raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
+            query_vector = vectors[0]
+        elif len(query_vector) != configuration.dimensions:
             raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
-        query_vector = vectors[0]
 
-        # A repository is bound to one asyncpg connection, which cannot execute
-        # concurrent commands. Keep the channel SQL serial here; callers that need
-        # connection-level concurrency can create separate service instances.
         dense_rows = await self._repo.search_active_chunks_cosine(
             scope.board_id,
             scope.class_id,
@@ -221,82 +249,72 @@ class RetrievalService:
             self._lexical_top_k,
             allow_named_draft,
         )
-        hits = [
-            *self._channel_hits(dense_rows, RetrievalChannel.DENSE),
-            *self._channel_hits(expected_rows, RetrievalChannel.EXPECTED_QUESTION),
-            *self._channel_hits(lexical_rows, RetrievalChannel.LEXICAL),
+
+        dense_hits = [
+            RankedChannelHit(
+                citation_id=row["citation_id"],
+                channel_rank=idx + 1,
+                channel=RetrievalChannel.DENSE_CHUNK,
+            )
+            for idx, row in enumerate(dense_rows)
         ]
-        fused = fuse_ranked_hits(hits)
-        visual_map = await self._repo.get_eligible_retrieval_visuals(
-            [item.citation.citation_id for item in fused[:4]]
-        )
-        with_visuals = tuple(
-            RetrievedEvidence(
-                citation=Citation(
-                    citation_id=item.citation.citation_id,
-                    content=item.citation.content,
-                    chapter_id=item.citation.chapter_id,
-                    topic_no=item.citation.topic_no,
-                    topic_title=item.citation.topic_title,
-                    page_start=item.citation.page_start,
-                    page_end=item.citation.page_end,
-                    visuals=tuple(
-                        RetrievedVisual(
-                            visual_id=visual["visual_id"],
-                            title=visual["title"],
-                            description=visual["description"],
-                            display_policy=visual["display_policy"],
-                        )
-                        for visual in visual_map.get(item.citation.citation_id, ())
-                    ),
-                ),
-                fused_rank=item.fused_rank,
-                contributions=item.contributions,
+        expected_hits = [
+            RankedChannelHit(
+                citation_id=row["citation_id"],
+                channel_rank=int(row["expected_question_rank"]),
+                channel=RetrievalChannel.DENSE_QUESTION,
             )
-            for item in fused
-        )
-        return classify_evidence(with_visuals)
-
-    @staticmethod
-    def _configuration_from_active_version(
-        version: dict[str, Any],
-    ) -> BGEEmbeddingConfiguration:
-        try:
-            configuration = BGEEmbeddingConfiguration(
-                model=version["embedding_model"],
-                revision=version["embedding_revision"],
-                dimensions=version["embedding_dim"],
-                normalize=version["normalize_embeddings"],
-                query_instruction=version["query_instruction"],
+            for row in expected_rows
+        ]
+        lexical_hits = [
+            RankedChannelHit(
+                citation_id=row["citation_id"],
+                channel_rank=idx + 1,
+                channel=RetrievalChannel.LEXICAL_BM25,
             )
-        except (KeyError, TypeError) as exc:
-            raise RetrievalConfigurationError(
-                "ACTIVE_CORPUS_CONFIGURATION_INVALID"
-            ) from exc
-        if version.get("embedding_config_fingerprint") != configuration.fingerprint():
-            raise RetrievalConfigurationError("ACTIVE_CORPUS_CONFIGURATION_MISMATCH")
-        return configuration
+            for idx, row in enumerate(lexical_rows)
+        ]
 
-    @staticmethod
-    def _channel_hits(
-        rows: list[dict[str, Any]], channel: RetrievalChannel
-    ) -> list[RankedChannelHit]:
-        hits = []
-        for position, row in enumerate(rows, start=1):
-            rank = int(row.get("expected_question_rank", position))
-            hits.append(
-                RankedChannelHit(
-                    citation=Citation(
-                        citation_id=row["citation_id"],
-                        content=row["content"],
-                        chapter_id=row["chapter_id"],
-                        topic_no=row["topic_no"],
-                        topic_title=row["topic_title"],
-                        page_start=row["page_start"],
-                        page_end=row["page_end"],
-                    ),
-                    channel=channel,
-                    rank=rank,
+        fused = fuse_ranked_hits(dense_hits, expected_hits, lexical_hits)
+        row_lookup: dict[str, dict[str, Any]] = {}
+        for row in (*dense_rows, *expected_rows, *lexical_rows):
+            row_lookup.setdefault(row["citation_id"], row)
+
+        evidence: list[RetrievedEvidence] = []
+        for fused_hit in fused:
+            source_row = row_lookup.get(fused_hit.citation_id)
+            if source_row is None:
+                continue
+            visual_rows = await self._repo.get_approved_chunk_visuals(
+                corpus_version_id, source_row["citation_id"]
+            )
+            citation = Citation(
+                citation_id=source_row["citation_id"],
+                chapter_id=source_row["chapter_id"],
+                topic_no=source_row["topic_no"],
+                topic_title=source_row["topic_title"],
+                page_start=source_row["page_start"],
+                page_end=source_row["page_end"],
+                visuals=[
+                    RetrievedVisual(
+                        visual_id=v["visual_id"],
+                        title=v["title"],
+                        description=v["description"],
+                        display_policy=v["display_policy"],
+                        storage_provider=v["storage_provider"],
+                        storage_key=v["storage_key"],
+                    )
+                    for v in visual_rows
+                ],
+            )
+            evidence.append(
+                RetrievedEvidence(
+                    citation=citation,
+                    chunk_text=source_row["content"],
+                    final_rank=fused_hit.final_rank,
+                    rrf_score=fused_hit.rrf_score,
+                    channel_ranks=fused_hit.channel_ranks,
                 )
             )
-        return hits
+
+        return classify_evidence(evidence)

@@ -51,7 +51,10 @@ def mock_firestore_hierarchy_check():
 @pytest.fixture
 async def conn():
     """Acquires a real asyncpg connection for testing within an isolated transaction block."""
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     tx = connection.transaction()
     await tx.start()
     yield connection
@@ -291,8 +294,11 @@ async def test_first_ingestion_concurrent_corpus_creation_race():
     lock while conn2 attempts concurrent get_or_create_building_corpus_version, verifying
     ON CONFLICT DO UPDATE + FOR UPDATE blocking behavior and single version creation.
     """
-    conn1 = await asyncpg.connect(DB_URL)
-    conn2 = await asyncpg.connect(DB_URL)
+    try:
+        conn1 = await asyncpg.connect(DB_URL)
+        conn2 = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
 
     board_id = f"b_race_{uuid.uuid4().hex[:6]}"
     class_id = f"c_race_{uuid.uuid4().hex[:6]}"

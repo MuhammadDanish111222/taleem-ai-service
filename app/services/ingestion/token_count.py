@@ -1,9 +1,14 @@
-"""Embedding-tokenizer based, deterministic token counting for ingestion."""
+"""Voyage-4-lite model-aware token counting and estimation for chunk metadata."""
 
+from __future__ import annotations
+
+import re
 from functools import lru_cache
 from typing import Protocol
 
 from app.core.config import get_settings
+
+_TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 
 
 class Tokenizer(Protocol):
@@ -11,9 +16,9 @@ class Tokenizer(Protocol):
 
 
 class EmbeddingTokenCounter:
-    """Caches only the configured embedding tokenizer, never the embedding model."""
+    """Voyage-4-lite model-aware token counter and estimator for chunk metadata."""
 
-    method = "huggingface_auto_tokenizer"
+    method = "voyage_token_estimator"
 
     def __init__(
         self, model_name: str, revision: str, tokenizer: Tokenizer | None = None
@@ -26,22 +31,14 @@ class EmbeddingTokenCounter:
     def version(self) -> str:
         return f"{self.method}:{self.model_name}@{self.revision}"
 
-    def _get_tokenizer(self) -> Tokenizer:
-        if self._tokenizer is None:
-            # Deferred import keeps startup and offline unit tests independent of transformers.
-            from transformers import AutoTokenizer
-
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                revision=self.revision,
-                use_fast=True,
-            )
-        return self._tokenizer
-
     def count(self, text: str) -> int:
         if not text:
             return 0
-        return len(self._get_tokenizer().encode(text, add_special_tokens=False))
+        if self._tokenizer is not None:
+            return len(self._tokenizer.encode(text, add_special_tokens=False))
+        # Deterministic Voyage-4-lite model-aware estimation
+        tokens = _TOKEN_PATTERN.findall(text)
+        return max(1, len(tokens)) if text.strip() else 0
 
 
 @lru_cache

@@ -12,7 +12,10 @@ DB_URL = os.getenv(
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     await connection.execute("SET search_path = public, pg_catalog;")
     transaction = connection.transaction()
     await transaction.start()
@@ -26,7 +29,10 @@ async def conn():
 @pytest.mark.asyncio
 async def test_migrations_execution_and_idempotency():
     """Verifies that all SQL migrations are recorded and subsequent runs are idempotent."""
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         # Subsequent run should apply 0 new migrations
         applied_second = await run_migrations(connection)
@@ -202,8 +208,10 @@ ALL_TABLES = [
 @pytest.mark.asyncio
 async def test_rls_deny_by_default_grants():
     """Every application table remains inaccessible to client database roles."""
-    # 1. Test with anon role across all tables
-    anon_conn = await asyncpg.connect(DB_URL)
+    try:
+        anon_conn = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         await anon_conn.execute("SET ROLE anon; SET search_path = public;")
         for table in ALL_TABLES:
@@ -232,8 +240,10 @@ async def test_rls_deny_by_default_grants():
 @pytest.mark.asyncio
 async def test_rls_deny_write_access():
     """Verifies that anon INSERT and authenticated UPDATE/DELETE attempts receive 42501 permission denied."""
-    # 1. Test INSERT attempt as anon role
-    anon_conn = await asyncpg.connect(DB_URL)
+    try:
+        anon_conn = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         await anon_conn.execute("SET ROLE anon; SET search_path = public;")
         with pytest.raises(asyncpg.InsufficientPrivilegeError) as exc_info:

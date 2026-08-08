@@ -8,7 +8,7 @@ import asyncpg
 
 from app.core.config import get_settings
 from app.core.firebase_admin import get_firebase_app
-from app.providers.embeddings.bge import BGEEmbeddingConfiguration
+from app.providers.embeddings.voyage import VoyageEmbeddingConfiguration
 from app.repositories.audit_repository import AuditRepository
 from app.repositories.rag_repository import RagRepository
 from app.services.ingestion.jsonl_chunks import (
@@ -97,9 +97,10 @@ async def handle_jsonl_ingest(
     async with conn.transaction():
         # Get or create building corpus version for this subject scope
         settings = get_settings()
-        configuration = BGEEmbeddingConfiguration(
+        configuration = VoyageEmbeddingConfiguration(
             model=settings.EMBEDDING_MODEL,
             revision=settings.EMBEDDING_MODEL_REVISION,
+            dimensions=settings.EMBEDDING_DIM,
         )
         corpus_ver = await repo.get_or_create_building_corpus_version(
             board_id,
@@ -110,7 +111,7 @@ async def handle_jsonl_ingest(
             embedding_dim=settings.EMBEDDING_DIM,
             embedding_config_fingerprint=configuration.fingerprint(),
             normalize_embeddings=configuration.normalize,
-            query_instruction=configuration.query_instruction,
+            query_instruction=None,
             require_existing_draft_after_activation=True,
         )
         corpus_version_id = str(corpus_ver["id"])

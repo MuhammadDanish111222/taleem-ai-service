@@ -18,7 +18,10 @@ DB_URL = os.getenv(
 
 @pytest.fixture
 async def db_conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     await connection.execute("SET search_path = public, pg_catalog;")
     transaction = connection.transaction()
     await transaction.start()

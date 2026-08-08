@@ -6,13 +6,23 @@ from typing import Any, Dict, List, Optional
 
 import asyncpg
 
-from app.providers.embeddings.bge import MODEL_NAME, MODEL_REVISION
+from app.providers.embeddings.voyage import (
+    EMBEDDING_DIMENSIONS,
+    MODEL_NAME,
+    MODEL_REVISION,
+)
 from app.services.ingestion.normalization import normalize_expected_question
 
 
 class RagRepository:
     def __init__(self, conn: asyncpg.Connection):
         self.conn = conn
+
+    def _validate_vector(self, vector: List[float]) -> None:
+        if len(vector) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Vector dimension {len(vector)} does not match expected {EMBEDDING_DIMENSIONS}."
+            )
 
     async def get_or_create_corpus(
         self, board_id: str, class_id: str, subject_id: str
@@ -34,7 +44,7 @@ class RagRepository:
         subject_id: str,
         embedding_model: str = MODEL_NAME,
         embedding_revision: str = MODEL_REVISION,
-        embedding_dim: int = 768,
+        embedding_dim: int = EMBEDDING_DIMENSIONS,
         embedding_config_fingerprint: str = "",
         normalize_embeddings: bool = True,
         query_instruction: Optional[str] = None,
@@ -773,11 +783,12 @@ class RagRepository:
     async def search_chunks_vector(
         self, corpus_version_id: str, query_embedding: List[float], top_k: int = 5
     ) -> List[Dict[str, Any]]:
-        """Executes an exact vector similarity search using L2 distance (<->)."""
+        """Executes an exact vector similarity search using cosine distance (<=>)."""
+        self._validate_vector(query_embedding)
         query = """
         SELECT id, document_version_id, corpus_version_id, chunk_index, content,
                chapter_id, topic_no, topic_title, page_start, page_end,
-               (embedding <-> $2::text::vector) AS distance
+               (embedding <=> $2::text::halfvec) AS distance
         FROM rag_chunks
         WHERE corpus_version_id = $1::uuid AND embedding IS NOT NULL
         ORDER BY distance ASC
@@ -875,7 +886,7 @@ class RagRepository:
               AND c.embedding_model = cv.embedding_model
               AND c.embedding_revision = cv.embedding_revision
               AND c.embedding_config_fingerprint = cv.embedding_config_fingerprint
-            ORDER BY c.embedding <=> $5::text::vector ASC, c.id ASC
+            ORDER BY c.embedding <=> $5::text::halfvec ASC, c.id ASC
             LIMIT $7;
             """,
             board_id,
@@ -913,7 +924,7 @@ class RagRepository:
                 SELECT DISTINCT ON (c.id)
                        c.id::text AS citation_id, c.content, c.chapter_id, c.topic_no,
                        c.topic_title, c.page_start, c.page_end,
-                       q.embedding <=> $5::text::vector AS best_question_distance
+                       q.embedding <=> $5::text::halfvec AS best_question_distance
                 FROM chunk_expected_questions q
                 JOIN rag_chunks c ON c.id = q.chunk_id
                 JOIN rag_corpus_versions cv ON cv.id = c.corpus_version_id
@@ -931,7 +942,7 @@ class RagRepository:
                   AND q.embedding_model = cv.embedding_model
                   AND q.embedding_revision = cv.embedding_revision
                   AND q.embedding_config_fingerprint = cv.embedding_config_fingerprint
-                ORDER BY c.id, q.embedding <=> $5::text::vector ASC, q.id ASC
+                ORDER BY c.id, q.embedding <=> $5::text::halfvec ASC, q.id ASC
             )
             SELECT citation_id, content, chapter_id, topic_no, topic_title, page_start,
                    page_end,

@@ -16,7 +16,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-from app.providers.embeddings.bge import BGEEmbeddingConfiguration
+from app.providers.embeddings.voyage import VoyageEmbeddingConfiguration
 from app.repositories.rag_repository import RagRepository
 from app.services.local_admin import LocalAdminError, LocalAdminService
 from app.services.retrieval.evidence import RetrievalScope
@@ -24,14 +24,14 @@ from app.services.retrieval.service import RetrievalScopeError, RetrievalService
 
 
 def _vector(index: int = 0) -> list[float]:
-    result = [0.0] * 768
+    result = [0.0] * 512
     result[index] = 1.0
     return result
 
 
 @dataclass
 class _QueryProvider:
-    configuration: BGEEmbeddingConfiguration
+    configuration: VoyageEmbeddingConfiguration
 
     @property
     def configuration_fingerprint(self) -> str:
@@ -44,7 +44,10 @@ class _QueryProvider:
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(os.environ["DATABASE_URL"])
+    try:
+        connection = await asyncpg.connect(os.environ["DATABASE_URL"])
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     transaction = connection.transaction()
     await transaction.start()
     try:
@@ -65,7 +68,7 @@ async def _new_version(
 ) -> dict[str, object]:
     """Create a complete, provenance-valid snapshot without running a model."""
     repo = RagRepository(conn)
-    configuration = BGEEmbeddingConfiguration()
+    configuration = VoyageEmbeddingConfiguration()
     corpus = await repo.get_or_create_corpus(**scope)
     version = await repo.create_corpus_version(
         str(corpus["id"]),
@@ -646,7 +649,10 @@ async def test_named_draft_qa_is_isolated_and_rollback_changes_active_retrieval(
 @pytest.mark.asyncio
 async def test_concurrent_activations_keep_one_active_and_auditable():
     """Uses committed fixture rows only because two DB sessions must contend."""
-    setup = await asyncpg.connect(os.environ["DATABASE_URL"])
+    try:
+        setup = await asyncpg.connect(os.environ["DATABASE_URL"])
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     scope = _scope()
     corpus_id = ""
     version_ids: list[str] = []

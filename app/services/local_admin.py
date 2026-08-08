@@ -471,6 +471,150 @@ class LocalAdminService:
             "source_corpus_version_id": active_version_id,
         }
 
+    async def create_embedding_migration_draft(
+        self,
+        *,
+        source_version_id: str,
+        scope: dict[str, str],
+        actor_id: str,
+        request_id: str,
+        target_model: str | None = None,
+        target_revision: str | None = None,
+        target_dim: int | None = None,
+    ) -> dict[str, Any]:
+        """Clones an active or superseded snapshot into a fresh building snapshot configured for Voyage-4-lite."""
+        from app.providers.embeddings.voyage import (
+            EMBEDDING_DIMENSIONS,
+            MODEL_NAME,
+            MODEL_REVISION,
+            VoyageEmbeddingConfiguration,
+        )
+
+        model = target_model or MODEL_NAME
+        revision = target_revision or MODEL_REVISION
+        dim = target_dim or EMBEDDING_DIMENSIONS
+        config = VoyageEmbeddingConfiguration(
+            model=model,
+            revision=revision,
+            dimensions=dim,
+        )
+
+        async with self.conn.transaction():
+            source = await self._version_for_scope(source_version_id, scope, lock=True)
+            if source["status"] not in ("active", "superseded"):
+                raise LocalAdminError("DRAFT_SOURCE_NOT_ELIGIBLE")
+            await self.conn.execute(
+                "SELECT id FROM rag_corpora WHERE id=$1 FOR UPDATE", source["corpus_id"]
+            )
+            version_no = await self.conn.fetchval(
+                "SELECT COALESCE(MAX(version_no),0)+1 FROM rag_corpus_versions WHERE corpus_id=$1",
+                source["corpus_id"],
+            )
+            draft = await self.conn.fetchrow(
+                """INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim,
+                    normalize_embeddings, query_instruction, chunking_config, embedding_config_fingerprint, embedding_input_fingerprint,
+                    status, source_corpus_version_id)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'building',$11::uuid) RETURNING *""",
+                source["corpus_id"],
+                version_no,
+                model,
+                revision,
+                dim,
+                source["normalize_embeddings"],
+                source["query_instruction"],
+                source["chunking_config"],
+                config.fingerprint(),
+                source["embedding_input_fingerprint"],
+                source_version_id,
+            )
+            for doc in await self.conn.fetch(
+                "SELECT * FROM rag_document_versions WHERE corpus_version_id=$1::uuid ORDER BY id",
+                source_version_id,
+            ):
+                new_doc = await self.conn.fetchrow(
+                    """INSERT INTO rag_document_versions (corpus_version_id,resource_id,resource_version_id,pipeline_version,doc_title,total_chunks)
+                    VALUES ($1,$2,$3,$4,$5,$6) RETURNING id""",
+                    draft["id"],
+                    doc["resource_id"],
+                    doc["resource_version_id"],
+                    doc["pipeline_version"],
+                    doc["doc_title"],
+                    doc["total_chunks"],
+                )
+                for chunk in await self.conn.fetch(
+                    "SELECT * FROM rag_chunks WHERE document_version_id=$1 ORDER BY id",
+                    doc["id"],
+                ):
+                    old_chunk = str(chunk["id"])
+                    new_chunk_row = await self.conn.fetchrow(
+                        """INSERT INTO rag_chunks (document_version_id,corpus_version_id,chunk_index,content,chapter_id,topic_no,topic_title,page_start,page_end,embedding,content_type,metadata,content_hash,language,token_count,embedding_model,embedding_revision,embedding_config_fingerprint,embedding_input_hash,embedding_status,embedding_started_at,embedding_completed_at,embedding_error_code)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11,$12,$13,$14,'','','','','pending',NULL,NULL,NULL) RETURNING id""",
+                        new_doc["id"],
+                        draft["id"],
+                        chunk["chunk_index"],
+                        chunk["content"],
+                        chunk["chapter_id"],
+                        chunk["topic_no"],
+                        chunk["topic_title"],
+                        chunk["page_start"],
+                        chunk["page_end"],
+                        chunk["content_type"],
+                        chunk["metadata"],
+                        chunk["content_hash"],
+                        chunk["language"],
+                        chunk["token_count"],
+                    )
+                    new_chunk = new_chunk_row["id"]
+                    for question in await self.conn.fetch(
+                        "SELECT * FROM chunk_expected_questions WHERE chunk_id=$1::uuid ORDER BY id",
+                        old_chunk,
+                    ):
+                        await self.conn.execute(
+                            """INSERT INTO chunk_expected_questions (chunk_id,question_text,question_normalized,question_hash,embedding,embedding_model,embedding_revision,embedding_config_fingerprint,embedding_input_hash,embedding_status,embedding_started_at,embedding_completed_at,embedding_error_code)
+                            VALUES ($1,$2,$3,$4,NULL,'','','','','pending',NULL,NULL,NULL)""",
+                            new_chunk,
+                            question["question_text"],
+                            question["question_normalized"],
+                            question["question_hash"],
+                        )
+                    for visual in await self.conn.fetch(
+                        "SELECT * FROM rag_visuals WHERE chunk_id=$1::uuid", old_chunk
+                    ):
+                        await self.conn.execute(
+                            """INSERT INTO rag_visuals (chunk_id,visual_id,visual_type,storage_path,title,description,storage_provider,storage_key,display_policy,review_status,visual_text_hash)
+                            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
+                            new_chunk,
+                            visual["visual_id"],
+                            visual["visual_type"],
+                            visual["storage_key"],
+                            visual["title"],
+                            visual["description"],
+                            visual["storage_provider"],
+                            visual["storage_key"],
+                            visual["display_policy"],
+                            visual["review_status"],
+                            visual["visual_text_hash"],
+                        )
+            await self.repo.refresh_embedding_counts(str(draft["id"]))
+            await self.audit.create_audit_log(
+                actor_id,
+                "corpus_migration_draft_created",
+                "rag_corpus_version",
+                str(draft["id"]),
+                after_value={
+                    "request_id": request_id,
+                    "source_corpus_version_id": source_version_id,
+                    "scope": scope,
+                    "target_model": model,
+                    "target_dim": dim,
+                },
+            )
+        return {
+            "id": str(draft["id"]),
+            "status": "building",
+            "source_corpus_version_id": source_version_id,
+        }
+
     async def overview(self, scope: dict[str, str]) -> dict[str, Any]:
         rows = await self.conn.fetch(
             """SELECT cv.id::text AS id, cv.version_no, cv.status, cv.source_corpus_version_id::text AS source_corpus_version_id,

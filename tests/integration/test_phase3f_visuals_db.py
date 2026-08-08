@@ -10,14 +10,17 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-from app.providers.embeddings.bge import BGEEmbeddingConfiguration
+from app.providers.embeddings.voyage import VoyageEmbeddingConfiguration
 from app.repositories.rag_repository import RagRepository
 from app.services.local_admin import LocalAdminError, LocalAdminService
 
 
 @pytest.mark.asyncio
 async def test_visual_insert_gets_updated_at_and_active_clone_copies_visual():
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    try:
+        conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     transaction = conn.transaction()
     await transaction.start()
     try:
@@ -27,7 +30,7 @@ async def test_visual_insert_gets_updated_at_and_active_clone_copies_visual():
             "class_id": "class",
             "subject_id": "subject",
         }
-        configuration = BGEEmbeddingConfiguration()
+        configuration = VoyageEmbeddingConfiguration()
         repo = RagRepository(conn)
         corpus = await repo.get_or_create_corpus(**scope)
         version = await repo.create_corpus_version(
@@ -38,7 +41,7 @@ async def test_visual_insert_gets_updated_at_and_active_clone_copies_visual():
             configuration.dimensions,
             embedding_config_fingerprint=configuration.fingerprint(),
             normalize_embeddings=configuration.normalize,
-            query_instruction=configuration.query_instruction,
+            query_instruction=None,
         )
         document = await repo.create_document_version(
             str(version["id"]), f"resource-{suffix}", "v1", "test", "Visual test"

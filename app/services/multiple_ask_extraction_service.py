@@ -12,7 +12,7 @@ from pypdf import PdfReader
 
 from app.core.config import get_settings
 from app.providers.ocr.base import OCRProvider, OCRProviderError
-from app.providers.ocr.tesseract import TesseractOCRProvider
+from app.providers.ocr.gemini import GeminiOCRProvider
 from app.repositories.multiple_ask_repository import MultipleAskRepository
 from app.services.answers.normalization import normalize_question, question_hash
 from app.services.jobs.queue import JobQueueService
@@ -59,7 +59,7 @@ class MultipleAskExtractionService:
         self._conn = conn
         self._repo = MultipleAskRepository(conn)
         self._storage = storage or TemporaryUploadStorage()
-        self._ocr = ocr or TesseractOCRProvider(
+        self._ocr = ocr or GeminiOCRProvider(
             timeout_seconds=get_settings().MULTIPLE_ASK_OCR_TIMEOUT_SECONDS
         )
 
@@ -323,7 +323,7 @@ class MultipleAskExtractionService:
                 kind, locators, provider = (
                     "image_ocr",
                     [{"page_number": 1, "source_kind": "ocr"}],
-                    "tesseract",
+                    "gemini",
                 )
             else:
                 normalized, kind, locators, provider = await self._pdf_text(raw)
@@ -384,7 +384,7 @@ class MultipleAskExtractionService:
             normalized,
             "pdf_ocr" if used_ocr else "pdf_embedded_text",
             locators,
-            "tesseract" if used_ocr else None,
+            "gemini" if used_ocr else None,
         )
 
     async def _ocr_text(self, image_bytes: bytes) -> str:

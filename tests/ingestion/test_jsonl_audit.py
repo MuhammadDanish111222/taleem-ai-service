@@ -14,7 +14,10 @@ from tests.conftest import DB_URL
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     tx = connection.transaction()
     await tx.start()
     yield connection

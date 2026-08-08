@@ -29,10 +29,18 @@ class Settings(BaseSettings):
     DEEPSEEK_MAX_OUTPUT_TOKENS: int = 2400
     DEEPSEEK_MAX_INPUT_CHARACTERS: int = 32000
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/taleem_dev"
-    EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"
-    EMBEDDING_MODEL_REVISION: str = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
-    EMBEDDING_DIM: int = 768
+    TALEEM_PROCESS_ROLE: str = "api"
     WORKER_MODE: str = ""
+    EMBEDDING_MODEL: str = "voyage-4-lite"
+    EMBEDDING_MODEL_REVISION: str = "voyage-4-lite-512-v1"
+    EMBEDDING_DIM: int = 512
+    EMBEDDING_OUTPUT_DTYPE: str = "float"
+    VOYAGE_ADMIN_API_KEY: str = ""
+    VOYAGE_API_KEY: str = ""
+    VOYAGE_EMBED_BATCH_SIZE: int = 64
+    GEMINI_API_KEY: str = ""
+    GEMINI_OCR_MODEL: str = "gemini-3.6-flash"
+    MULTIPLE_ASK_ANSWER_BATCH_SIZE: int = 5
     # Module 5 Run 1 is intentionally dark until its complete worker flow is
     # introduced and separately verified. This gate applies to all internals.
     MULTIPLE_ASK_RUN1_ENABLED: bool = False

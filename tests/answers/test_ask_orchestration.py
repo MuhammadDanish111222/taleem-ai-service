@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import asyncpg
 import pytest
 
-from app.providers.embeddings.bge import BGEEmbeddingConfiguration
+from app.providers.embeddings.voyage import VoyageEmbeddingConfiguration
 from app.providers.llm.deepseek import (
     DeepSeekProviderError,
     ProviderErrorCode,
@@ -56,7 +56,10 @@ TEST_BOARD = f"test-ask-{uuid.uuid4().hex[:20]}"
 
 @pytest.fixture
 async def conn():
-    connection = await asyncpg.connect(DB_URL)
+    try:
+        connection = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     transaction = connection.transaction()
     await transaction.start()
     try:
@@ -217,7 +220,7 @@ async def create_approved(conn, question, chapter_id):
 
 async def create_reviewed_visual(conn):
     suffix = uuid.uuid4().hex
-    configuration = BGEEmbeddingConfiguration()
+    configuration = VoyageEmbeddingConfiguration()
     rag = RagRepository(conn)
     corpus = await rag.get_or_create_corpus(
         board_id=TEST_BOARD,
@@ -500,7 +503,7 @@ async def test_strong_retrieval_persists_pending_grounded_candidate(conn):
 @pytest.mark.asyncio
 async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
     suffix = uuid.uuid4().hex
-    configuration = BGEEmbeddingConfiguration()
+    configuration = VoyageEmbeddingConfiguration()
     rag = RagRepository(conn)
     corpus = await rag.get_or_create_corpus(
         board_id=TEST_BOARD,

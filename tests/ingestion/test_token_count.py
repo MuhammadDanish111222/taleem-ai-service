@@ -9,7 +9,7 @@ class FakeTokenizer:
 
 def test_token_count_is_empty_safe_and_deterministic_without_model_loading():
     counter = EmbeddingTokenCounter(
-        "BAAI/bge-base-en-v1.5", "test-revision", tokenizer=FakeTokenizer()
+        "voyage-4-lite", "test-revision", tokenizer=FakeTokenizer()
     )
 
     assert counter.count("") == 0
@@ -17,13 +17,13 @@ def test_token_count_is_empty_safe_and_deterministic_without_model_loading():
     assert counter.count("normal text") == 10
     assert (
         counter.version
-        == "huggingface_auto_tokenizer:BAAI/bge-base-en-v1.5@test-revision"
+        == "voyage_token_estimator:voyage-4-lite@test-revision"
     )
 
 
 def test_token_count_handles_long_text_deterministically():
     counter = EmbeddingTokenCounter(
-        "BAAI/bge-base-en-v1.5", "test-revision", tokenizer=FakeTokenizer()
+        "voyage-4-lite", "test-revision", tokenizer=FakeTokenizer()
     )
     text = "token " * 10_000
 

@@ -268,23 +268,25 @@ class AskService:
             source_policy = await self._source_policy(
                 request.class_id, request.subject_id
             )
-            if (
-                approved is None
-                and source_policy["semantic_reuse_enabled"]
-                and source_policy["semantic_distance_threshold"] is not None
-            ):
-                semantic_vector = await self._retrieval.embed_query_for_approved_reuse(
-                    request.question,
-                    RetrievalScope(
-                        request.board_id,
-                        request.class_id,
-                        request.subject_id,
-                        request.chapter_id,
-                    ),
+            retrieval_scope = RetrievalScope(
+                request.board_id,
+                request.class_id,
+                request.subject_id,
+                request.chapter_id,
+            )
+            query_vector: list[float] | None = None
+            if approved is None:
+                # Generate query vector once on miss for potential semantic reuse & hybrid retrieval
+                query_vector = await self._retrieval.embed_live_query(
+                    request.question, retrieval_scope
                 )
-                if semantic_vector is not None:
+                if (
+                    query_vector is not None
+                    and source_policy["semantic_reuse_enabled"]
+                    and source_policy["semantic_distance_threshold"] is not None
+                ):
                     approved = await self._bank.find_semantic(
-                        query_embedding=semantic_vector,
+                        query_embedding=query_vector,
                         evaluated_threshold=float(
                             source_policy["semantic_distance_threshold"]
                         ),
@@ -295,6 +297,7 @@ class AskService:
                         chapter_id=request.chapter_id,
                         answer_mode=AnswerMode(request.answer_mode),
                     )
+
             if approved is not None:
                 async with self._conn.transaction():
                     await self._persist_approved(ai_request, approved)
@@ -303,12 +306,8 @@ class AskService:
 
             evidence = await self._retrieval.retrieve(
                 request.question,
-                RetrievalScope(
-                    request.board_id,
-                    request.class_id,
-                    request.subject_id,
-                    request.chapter_id,
-                ),
+                retrieval_scope,
+                query_vector=query_vector,
             )
             active_version = await RagRepository(self._conn).get_active_corpus_version(
                 request.board_id, request.class_id, request.subject_id

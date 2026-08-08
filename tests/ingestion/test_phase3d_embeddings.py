@@ -10,8 +10,8 @@ import asyncpg
 import pytest
 
 from app.core.worker_modes import WorkerMode, owned_job_types
-from app.providers.embeddings.bge import (
-    BGEEmbeddingConfiguration,
+from app.providers.embeddings.voyage import (
+    VoyageEmbeddingConfiguration,
     embedding_input_hash,
     format_chunk_embedding_input,
 )
@@ -23,7 +23,7 @@ from app.services.ingestion.embed_questions import embed_questions
 
 @dataclass
 class FakeEmbeddingProvider:
-    configuration: BGEEmbeddingConfiguration = BGEEmbeddingConfiguration()
+    configuration: VoyageEmbeddingConfiguration = VoyageEmbeddingConfiguration()
 
     def __post_init__(self):
         self.calls: list[list[str]] = []
@@ -39,7 +39,7 @@ class FakeEmbeddingProvider:
             value = (
                 int(hashlib.sha256(text.encode()).hexdigest()[:4], 16) % 1000
             ) / 1000
-            vectors.append([value] * 768)
+            vectors.append([value] * 512)
         return vectors
 
 
@@ -195,14 +195,14 @@ async def test_changed_configuration_requires_a_new_building_version(conn):
     await repo.refresh_embedding_counts(corpus_version_id)
     assert (await repo.mark_qa_ready(corpus_version_id))["ready"] is True
 
-    changed = BGEEmbeddingConfiguration(query_instruction="Changed instruction: ")
+    changed = VoyageEmbeddingConfiguration(query_instruction="Changed instruction: ")
     next_version = await repo.get_or_create_building_corpus_version(
         "board-config",
         "class-9",
         "physics",
         changed.model,
         changed.revision,
-        768,
+        512,
         changed.fingerprint(),
         changed.normalize,
         changed.query_instruction,
