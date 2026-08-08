@@ -72,10 +72,10 @@ async def _building_corpus(conn, scope: str = "phase3d"):
         "physics",
         provider.configuration.model,
         provider.configuration.revision,
-        768,
+        512,
         provider.configuration_fingerprint,
         provider.configuration.normalize,
-        provider.configuration.query_instruction,
+        None,
     )
     document = await repo.create_document_version(
         str(version["id"]),
@@ -195,7 +195,7 @@ async def test_changed_configuration_requires_a_new_building_version(conn):
     await repo.refresh_embedding_counts(corpus_version_id)
     assert (await repo.mark_qa_ready(corpus_version_id))["ready"] is True
 
-    changed = VoyageEmbeddingConfiguration(query_instruction="Changed instruction: ")
+    changed = VoyageEmbeddingConfiguration(query_input_format="changed-query-format")
     next_version = await repo.get_or_create_building_corpus_version(
         "board-config",
         "class-9",
@@ -205,7 +205,7 @@ async def test_changed_configuration_requires_a_new_building_version(conn):
         512,
         changed.fingerprint(),
         changed.normalize,
-        changed.query_instruction,
+        None,
     )
     assert str(next_version["id"]) != corpus_version_id
     assert next_version["status"] == "building"
@@ -241,7 +241,7 @@ async def test_same_configuration_reopens_qa_ready_version_for_next_chapter(conn
         provider.configuration.dimensions,
         provider.configuration_fingerprint,
         provider.configuration.normalize,
-        provider.configuration.query_instruction,
+        None,
     )
 
     assert str(reopened["id"]) == corpus_version_id
@@ -279,7 +279,7 @@ async def test_active_subject_requires_an_explicit_editable_draft_for_import(con
             provider.configuration.dimensions,
             provider.configuration_fingerprint,
             provider.configuration.normalize,
-            provider.configuration.query_instruction,
+            None,
             require_existing_draft_after_activation=True,
         )
 
@@ -385,5 +385,5 @@ async def test_qa_ready_is_blocked_for_invalid_chunk_or_question_vectors(
 
 
 def test_wrong_dimension_vectors_are_rejected_before_database_write():
-    with pytest.raises(ValueError, match="exactly 768"):
-        RagRepository._validate_vector([0.0] * 767)
+    with pytest.raises(ValueError, match="exactly 512"):
+        RagRepository._validate_vector([0.0] * 511)

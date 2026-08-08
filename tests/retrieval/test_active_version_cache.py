@@ -25,11 +25,10 @@ class FakeRedis:
 def version() -> dict:
     return {
         "id": "9f70aa43-9924-4ae0-8258-1fbfab75290b",
-        "embedding_model": "BAAI/bge-base-en-v1.5",
+        "embedding_model": "voyage-4-lite",
         "embedding_revision": "revision",
-        "embedding_dim": 768,
+        "embedding_dim": 512,
         "normalize_embeddings": True,
-        "query_instruction": "Represent this sentence:",
         "embedding_config_fingerprint": "fingerprint",
         "status": "active",
     }

@@ -91,7 +91,7 @@ async def test_single_active_corpus_version_constraint(conn):
     await conn.execute(
         """
         INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, embedding_config_fingerprint, status)
-        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'test-fingerprint', 'qa_ready');
+        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 512, 'test-fingerprint', 'qa_ready');
         """,
         corpus_id,
     )
@@ -105,7 +105,7 @@ async def test_single_active_corpus_version_constraint(conn):
         await conn.execute(
             """
             INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, embedding_config_fingerprint, status)
-            VALUES ($1, 2, 'text-embedding-3-small', 'v1', 768, 'test-fingerprint', 'qa_ready');
+            VALUES ($1, 2, 'text-embedding-3-small', 'v1', 512, 'test-fingerprint', 'qa_ready');
             """,
             corpus_id,
         )
@@ -125,7 +125,7 @@ async def test_foreign_key_on_delete_cascade_and_set_null(conn):
     cv = await conn.fetchrow(
         """
         INSERT INTO rag_corpus_versions (corpus_id, version_no, embedding_model, embedding_revision, embedding_dim, embedding_config_fingerprint, status)
-        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 768, 'test-fingerprint', 'qa_ready') RETURNING id;
+        VALUES ($1, 1, 'text-embedding-3-small', 'v1', 512, 'test-fingerprint', 'qa_ready') RETURNING id;
         """,
         corpus["id"],
     )

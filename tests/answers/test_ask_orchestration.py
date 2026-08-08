@@ -235,7 +235,7 @@ async def create_reviewed_visual(conn):
         configuration.dimensions,
         embedding_config_fingerprint=configuration.fingerprint(),
         normalize_embeddings=configuration.normalize,
-        query_instruction=configuration.query_instruction,
+        query_instruction=None,
     )
     document = await rag.create_document_version(
         str(version["id"]),
@@ -518,7 +518,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
         configuration.dimensions,
         embedding_config_fingerprint=configuration.fingerprint(),
         normalize_embeddings=configuration.normalize,
-        query_instruction=configuration.query_instruction,
+        query_instruction=None,
     )
     document = await rag.create_document_version(
         str(version["id"]),
@@ -573,7 +573,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
     )
     await conn.execute(
         """UPDATE rag_chunks SET
-             embedding=('[' || array_to_string(array_fill(0.0::float8,ARRAY[768]),',') || ']')::vector,
+             embedding=('[' || array_to_string(array_fill(0.0::float8,ARRAY[512]),',') || ']')::vector,
              embedding_status='embedded',embedding_model=$2,
              embedding_revision=$3,embedding_config_fingerprint=$4
            WHERE corpus_version_id=$1::uuid""",

@@ -91,7 +91,7 @@ async def test_rag_repository_crud_vector_and_lexical(db_conn):
         1,
         "text-embedding-3-small",
         "rev1",
-        768,
+        512,
         embedding_config_fingerprint="test-fingerprint",
     )
     assert cv["status"] == "building"
@@ -112,8 +112,8 @@ async def test_rag_repository_crud_vector_and_lexical(db_conn):
     )
     assert doc_ver["doc_title"] == "Physics Chapter 1"
 
-    # 5. Insert chunk with metadata & 768-dim vector embedding
-    sample_vector = [0.1] * 768
+    # 5. Insert chunk with metadata & 512-dim vector embedding
+    sample_vector = [0.1] * 512
     chunk = await repo.insert_chunk(
         str(doc_ver["id"]),
         str(cv["id"]),

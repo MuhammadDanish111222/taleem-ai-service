@@ -206,7 +206,7 @@ class RagRepository:
         version_no: int,
         embedding_model: str,
         embedding_revision: str,
-        embedding_dim: int = 768,
+        embedding_dim: int = 512,
         chunking_config: Optional[Dict[str, Any]] = None,
         embedding_config_fingerprint: str = "",
         normalize_embeddings: bool = True,
@@ -592,7 +592,7 @@ class RagRepository:
             FROM rag_corpus_versions cv
             WHERE c.id = $1::uuid AND c.corpus_version_id = $2::uuid AND cv.id = c.corpus_version_id
               AND cv.status = 'building' AND cv.embedding_model = $5
-              AND cv.embedding_revision = $6 AND cv.embedding_dim = 768
+              AND cv.embedding_revision = $6 AND cv.embedding_dim = 512
               AND cv.embedding_config_fingerprint = $7;
             """,
             chunk_id,
@@ -628,7 +628,7 @@ class RagRepository:
             WHERE q.id = $1::uuid AND c.id = q.chunk_id AND c.corpus_version_id = $2::uuid
               AND cv.id = c.corpus_version_id AND cv.status = 'building'
               AND cv.embedding_model = $5 AND cv.embedding_revision = $6
-              AND cv.embedding_dim = 768 AND cv.embedding_config_fingerprint = $7;
+              AND cv.embedding_dim = 512 AND cv.embedding_config_fingerprint = $7;
             """,
             question_id,
             corpus_version_id,
@@ -707,7 +707,7 @@ class RagRepository:
         reasons = []
         if require_building and cv["status"] != "building":
             reasons.append("CORPUS_NOT_BUILDING")
-        if cv["embedding_dim"] != 768 or not cv["embedding_config_fingerprint"]:
+        if cv["embedding_dim"] != 512 or not cv["embedding_config_fingerprint"]:
             reasons.append("INVALID_EMBEDDING_CONFIGURATION")
         if cv["expected_chunk_count"] != actual["chunks"]:
             reasons.append("CHUNK_COUNT_MISMATCH")
@@ -739,8 +739,8 @@ class RagRepository:
 
     @staticmethod
     def _validate_vector(vector: List[float]) -> None:
-        if len(vector) != 768:
-            raise ValueError("Embedding vector dimension must be exactly 768.")
+        if len(vector) != 512:
+            raise ValueError("Embedding vector dimension must be exactly 512.")
 
     async def insert_chunk(
         self,

@@ -84,7 +84,7 @@ async def test_visual_insert_gets_updated_at_and_active_clone_copies_visual():
         await repo.write_chunk_embedding(
             str(inserted[0]["id"]),
             str(version["id"]),
-            [0.0] * 768,
+            [0.0] * 512,
             "input",
             configuration.model,
             configuration.revision,

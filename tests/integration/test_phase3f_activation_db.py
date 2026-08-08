@@ -78,7 +78,7 @@ async def _new_version(
         configuration.dimensions,
         embedding_config_fingerprint=configuration.fingerprint(),
         normalize_embeddings=configuration.normalize,
-        query_instruction=configuration.query_instruction,
+        query_instruction=None,
     )
     document = await repo.create_document_version(
         str(version["id"]), f"resource-{label}", "v1", "phase3f-test", label
