@@ -21,7 +21,11 @@ def _detect_mime_type(image_bytes: bytes, explicit_mime: str | None = None) -> s
         return "image/png"
     if image_bytes.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if image_bytes.startswith(b"RIFF") and len(image_bytes) >= 12 and image_bytes[8:12] == b"WEBP":
+    if (
+        image_bytes.startswith(b"RIFF")
+        and len(image_bytes) >= 12
+        and image_bytes[8:12] == b"WEBP"
+    ):
         return "image/webp"
     return "image/png"
 
@@ -38,7 +42,9 @@ class GeminiOCRProvider:
         client: httpx.AsyncClient | None = None,
     ):
         settings = get_settings()
-        self._api_key = api_key or settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        self._api_key = (
+            api_key or settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        )
         self._model = model or settings.GEMINI_OCR_MODEL or DEFAULT_GEMINI_OCR_MODEL
         self._timeout_seconds = timeout_seconds
         self._client = client

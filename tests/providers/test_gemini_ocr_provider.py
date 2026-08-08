@@ -22,7 +22,9 @@ async def test_gemini_ocr_extracts_text_successfully():
                     {
                         "content": {
                             "parts": [
-                                {"text": "Q1: Explain Newton's Third Law.\nAction equals reaction."}
+                                {
+                                    "text": "Q1: Explain Newton's Third Law.\nAction equals reaction."
+                                }
                             ]
                         }
                     }

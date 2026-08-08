@@ -40,7 +40,9 @@ async def embed_questions(
     batch_size: int = 64,
 ) -> Dict[str, int]:
     """Creates exactly one independent document-space vector per expected question."""
-    provider = provider or VoyageEmbeddingProvider(input_type="document", batch_size=batch_size)
+    provider = provider or VoyageEmbeddingProvider(
+        input_type="document", batch_size=batch_size
+    )
     if provider.configuration_fingerprint != configuration_fingerprint:
         raise ValueError("EMBEDDING_CONFIGURATION_MISMATCH_REQUIRES_NEW_CORPUS_VERSION")
     repo = RagRepository(conn)

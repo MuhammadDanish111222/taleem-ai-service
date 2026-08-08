@@ -95,9 +95,7 @@ async def test_short_answer_with_evidence_expands_topics_with_scope_fields():
         "status": "pending",
         "source_feature": "multiple_ask",
     }
-    service._asks = SimpleNamespace(
-        complete=AsyncMock(return_value={"id": "ans-456"})
-    )
+    service._asks = SimpleNamespace(complete=AsyncMock(return_value={"id": "ans-456"}))
     service._fail_item = AsyncMock()
 
     prompt_service = SimpleNamespace(
@@ -215,9 +213,7 @@ async def test_mcq_answer_with_options_passed_to_prompt():
         complete_answer_item=AsyncMock(),
     )
     candidate_request = {"id": "req-mcq", "status": "pending"}
-    service._asks = SimpleNamespace(
-        complete=AsyncMock(return_value={"id": "ans-mcq"})
-    )
+    service._asks = SimpleNamespace(complete=AsyncMock(return_value={"id": "ans-mcq"}))
     service._fail_item = AsyncMock()
 
     prompt_service = SimpleNamespace(
@@ -232,9 +228,7 @@ async def test_mcq_answer_with_options_passed_to_prompt():
         generate=AsyncMock(
             return_value=SimpleNamespace(
                 document={
-                    "blocks": [
-                        {"type": "paragraph", "text": "Correct answer is B."}
-                    ],
+                    "blocks": [{"type": "paragraph", "text": "Correct answer is B."}],
                     "cited_chunk_ids": [],
                 },
                 provider="deepseek",
@@ -316,7 +310,9 @@ async def test_retryable_deepseek_error_re_raises_for_queue_backoff():
             find_exact=AsyncMock(return_value=None),
             find_exact_variation=AsyncMock(return_value=None),
         ),
-        _retrieval=SimpleNamespace(retrieve=AsyncMock(return_value=SimpleNamespace(results=[]))),
+        _retrieval=SimpleNamespace(
+            retrieve=AsyncMock(return_value=SimpleNamespace(results=[]))
+        ),
     )
 
     with pytest.raises(DeepSeekProviderError) as exc_info:

@@ -434,4 +434,5 @@ def test_approved_evidence_policy_uses_only_top_parent_channel_ranks():
 
 def test_railway_public_owns_no_admin_ingestion_jobs():
     from app.core.worker_modes import LOCAL_ADMIN_JOB_TYPES
+
     assert owned_job_types(WorkerMode.RAILWAY_PUBLIC).isdisjoint(LOCAL_ADMIN_JOB_TYPES)

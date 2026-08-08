@@ -219,7 +219,9 @@ class MultipleAskAnswerService:
         # Step 2: For missed questions in the batch, fetch Voyage query embeddings in ONE call
         query_vectors: list[list[float]] = []
         if missed_items:
-            missed_texts = [" ".join(item["source_text"].split()) for item, _ in missed_items]
+            missed_texts = [
+                " ".join(item["source_text"].split()) for item, _ in missed_items
+            ]
             scope = RetrievalScope(
                 job["board_id"], job["class_id"], job["subject_id"], job["chapter_id"]
             )
@@ -241,7 +243,9 @@ class MultipleAskAnswerService:
         for (item, request), vector in zip(missed_items, query_vectors, strict=False):
             try:
                 mode = AnswerMode(item["answer_mode"])
-                policy = await self._ask._source_policy(job["class_id"], job["subject_id"])
+                policy = await self._ask._source_policy(
+                    job["class_id"], job["subject_id"]
+                )
                 approved = None
                 if (
                     vector
@@ -250,7 +254,9 @@ class MultipleAskAnswerService:
                 ):
                     approved = await self._ask._bank.find_semantic(
                         query_embedding=vector,
-                        evaluated_threshold=float(policy["semantic_distance_threshold"]),
+                        evaluated_threshold=float(
+                            policy["semantic_distance_threshold"]
+                        ),
                         enabled=True,
                         board_id=job["board_id"],
                         class_id=job["class_id"],
@@ -282,7 +288,10 @@ class MultipleAskAnswerService:
 
                 # Unified retrieval with pre-computed query vector
                 scope = RetrievalScope(
-                    job["board_id"], job["class_id"], job["subject_id"], job["chapter_id"]
+                    job["board_id"],
+                    job["class_id"],
+                    job["subject_id"],
+                    job["chapter_id"],
                 )
                 evidence = await self._ask._retrieval.retrieve(
                     item["source_text"], scope, query_vector=vector if vector else None
@@ -292,7 +301,9 @@ class MultipleAskAnswerService:
                 )
 
                 if mode == AnswerMode.MCQ:
-                    await self._answer_single_mcq(job, item, request, evidence, active, policy)
+                    await self._answer_single_mcq(
+                        job, item, request, evidence, active, policy
+                    )
                 else:
                     await self._answer_single_short_or_long(
                         job, item, request, mode, evidence, active, policy
@@ -426,9 +437,7 @@ class MultipleAskAnswerService:
                 "answer_style": "exam_style",
                 "allow_general": bool(policy["allow_general"]),
                 "evidence": [asdict(value) for value in context],
-                "allowed_visuals": [
-                    visual.model_dump() for visual in visuals.values()
-                ],
+                "allowed_visuals": [visual.model_dump() for visual in visuals.values()],
             }
         elif policy["allow_general"]:
             source = AnswerSource.GENERAL_KNOWLEDGE

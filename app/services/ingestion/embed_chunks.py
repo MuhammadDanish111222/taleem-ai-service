@@ -42,7 +42,9 @@ async def embed_chunks(
     batch_size: int = 64,
 ) -> Dict[str, int]:
     """Embeds only missing/stale chunk rows; existing valid vectors are untouched."""
-    provider = provider or VoyageEmbeddingProvider(input_type="document", batch_size=batch_size)
+    provider = provider or VoyageEmbeddingProvider(
+        input_type="document", batch_size=batch_size
+    )
     if provider.configuration_fingerprint != configuration_fingerprint:
         raise ValueError("EMBEDDING_CONFIGURATION_MISMATCH_REQUIRES_NEW_CORPUS_VERSION")
     repo = RagRepository(conn)

@@ -22,8 +22,12 @@ def test_procfile_contains_no_dev_and_branches():
 
     assert "uv run --no-dev" in content, "Procfile must use 'uv run --no-dev'"
     assert "TALEEM_PROCESS_ROLE" in content, "Procfile must handle TALEEM_PROCESS_ROLE"
-    assert "app.workers.main" in content, "Worker process branch must launch app.workers.main"
-    assert "uvicorn app.main:app" in content, "API process branch must launch uvicorn app.main:app"
+    assert "app.workers.main" in content, (
+        "Worker process branch must launch app.workers.main"
+    )
+    assert "uvicorn app.main:app" in content, (
+        "API process branch must launch uvicorn app.main:app"
+    )
 
 
 def test_zero_weight_imports_do_not_load_heavy_libraries():
@@ -34,7 +38,13 @@ def test_zero_weight_imports_do_not_load_heavy_libraries():
     import app.providers.ocr.gemini  # noqa: F401
     import app.workers.main  # noqa: F401
 
-    forbidden = {"torch", "transformers", "onnxruntime", "pytesseract", "huggingface_hub"}
+    forbidden = {
+        "torch",
+        "transformers",
+        "onnxruntime",
+        "pytesseract",
+        "huggingface_hub",
+    }
     loaded = set(sys.modules.keys())
     intersection = forbidden.intersection(loaded)
     assert not intersection, f"Forbidden heavy modules were imported: {intersection}"
@@ -47,7 +57,9 @@ def test_railway_worker_mode_and_credentials(monkeypatch):
 
     mode = resolve_worker_mode("railway_public")
     types = owned_job_types(mode)
-    assert types == frozenset({"multiple_ask_validate", "multiple_ask_extract", "multiple_ask_answer"})
+    assert types == frozenset(
+        {"multiple_ask_validate", "multiple_ask_extract", "multiple_ask_answer"}
+    )
 
     # Ensure Local Admin ingestion jobs are excluded from Railway
     admin_jobs = {"embed_chunks", "embed_questions", "jsonl_ingest", "ingestion_job"}
@@ -83,4 +95,3 @@ async def test_no_local_embedding_or_ocr_fallback(monkeypatch):
         await ocr_provider.extract_image_text(b"image_bytes")
     assert exc_info.value.code == "MULTIPLE_ASK_OCR_UNAVAILABLE"
     assert exc_info.value.retryable is False
-

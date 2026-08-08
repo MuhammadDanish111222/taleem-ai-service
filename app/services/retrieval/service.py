@@ -59,7 +59,9 @@ class RetrievalService:
     def __init__(
         self,
         conn: asyncpg.Connection,
-        provider_factory: Callable[[VoyageEmbeddingConfiguration], QueryEmbeddingProvider]
+        provider_factory: Callable[
+            [VoyageEmbeddingConfiguration], QueryEmbeddingProvider
+        ]
         | None = None,
         *,
         dense_top_k: int = 10,
@@ -145,7 +147,11 @@ class RetrievalService:
         if active_version is None:
             return classify_evidence(())
         return await self._retrieve_version(
-            question, scope, active_version, query_vector=query_vector, allow_named_draft=False
+            question,
+            scope,
+            active_version,
+            query_vector=query_vector,
+            allow_named_draft=False,
         )
 
     async def retrieve_named_version(
@@ -208,11 +214,15 @@ class RetrievalService:
         if query_vector is None:
             provider = self._provider_factory(configuration)
             if provider.configuration_fingerprint != configuration.fingerprint():
-                raise RetrievalConfigurationError("QUERY_PROVIDER_CONFIGURATION_MISMATCH")
+                raise RetrievalConfigurationError(
+                    "QUERY_PROVIDER_CONFIGURATION_MISMATCH"
+                )
             if asyncio.iscoroutinefunction(provider.embed_queries):
                 vectors = await provider.embed_queries([normalized_question])
             else:
-                vectors = await asyncio.to_thread(provider.embed_queries, [normalized_question])
+                vectors = await asyncio.to_thread(
+                    provider.embed_queries, [normalized_question]
+                )
             if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
                 raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
             query_vector = vectors[0]

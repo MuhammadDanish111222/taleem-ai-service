@@ -7,10 +7,7 @@ def test_token_count_is_empty_safe_and_deterministic_without_model_loading():
     assert counter.count("") == 0
     assert counter.count("normal text") == 2
     assert counter.count("normal text") == 2
-    assert (
-        counter.version
-        == "voyage_token_estimator:voyage-4-lite@test-revision"
-    )
+    assert counter.version == "voyage_token_estimator:voyage-4-lite@test-revision"
 
 
 def test_token_count_handles_long_text_deterministically():
