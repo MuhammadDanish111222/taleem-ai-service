@@ -26,7 +26,7 @@ LOCAL_ADMIN_JOB_TYPES = frozenset(
 )
 # Railway alone owns the Module 5 student-input validation marker. Its Run 1
 # handler reads bounded private bytes for canonical validation. Run 2's separate
-# extraction handler reads those same temporary sources with local Tesseract.
+# extraction handler reads those same temporary sources with Gemini Vision OCR.
 # Local-admin ingestion remains strictly separate.
 RAILWAY_PUBLIC_JOB_TYPES = frozenset(
     {"multiple_ask_validate", "multiple_ask_extract", "multiple_ask_answer"}
