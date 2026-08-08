@@ -29,6 +29,7 @@ def version() -> dict:
         "embedding_revision": "revision",
         "embedding_dim": 512,
         "normalize_embeddings": True,
+        "query_instruction": None,
         "embedding_config_fingerprint": "fingerprint",
         "status": "active",
     }
