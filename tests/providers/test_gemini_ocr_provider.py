@@ -90,3 +90,28 @@ async def test_gemini_ocr_maps_500_to_retryable_failed():
             await provider.extract_image_text(b"some_bytes")
         assert exc.value.code == "MULTIPLE_ASK_OCR_FAILED"
         assert exc.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_gemini_ocr_detects_jpeg_mime_type():
+    import json
+
+    captured_mime = ""
+
+    def mock_post(request: httpx.Request):
+        nonlocal captured_mime
+        body = json.loads(request.content)
+        captured_mime = body["contents"][0]["parts"][1]["inline_data"]["mime_type"]
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "JPEG OCR text"}]}}]},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(mock_post)
+    async with httpx.AsyncClient(transport=transport) as client:
+        provider = GeminiOCRProvider(api_key="test_key", client=client)
+        jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+        text = await provider.extract_image_text(jpeg_bytes)
+        assert text == "JPEG OCR text"
+        assert captured_mime == "image/jpeg"

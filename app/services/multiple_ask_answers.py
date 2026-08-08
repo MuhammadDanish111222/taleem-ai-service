@@ -304,11 +304,19 @@ class MultipleAskAnswerService:
                 AskServiceError,
                 DeepSeekProviderError,
             ) as exc:
+                if isinstance(exc, DeepSeekProviderError) and exc.retryable:
+                    logger.warning(
+                        "Retryable DeepSeek error for Multiple Ask item_id=%s job_id=%s: %s (re-raising for worker retry backoff)",
+                        item.get("id"),
+                        job.get("id"),
+                        exc,
+                    )
+                    raise
                 code = getattr(exc, "code", str(exc))
                 if hasattr(code, "value"):
                     code = code.value
                 logger.warning(
-                    "Handled error for Multiple Ask item_id=%s job_id=%s: %s",
+                    "Handled non-retryable error for Multiple Ask item_id=%s job_id=%s: %s",
                     item.get("id"),
                     job.get("id"),
                     code,

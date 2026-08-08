@@ -15,6 +15,9 @@ class _Connection:
     async def transaction(self):
         yield self
 
+    async def fetchrow(self, *args, **kwargs):
+        return None
+
 
 def _item(index: int) -> dict:
     return {
@@ -267,3 +270,57 @@ async def test_mcq_answer_with_options_passed_to_prompt():
     assert sent_prompt["mcq_options"] == item["mcq_options"]
     assert service._asks.complete.await_count == 1
     assert service._repo.complete_answer_item.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retryable_deepseek_error_re_raises_for_queue_backoff():
+    from app.providers.llm.deepseek import DeepSeekProviderError, ProviderErrorCode
+
+    service = object.__new__(MultipleAskAnswerService)
+    service._conn = _Connection()
+    service._repo = SimpleNamespace(
+        lock_answer_context=AsyncMock(
+            return_value={
+                "id": "job-1",
+                "workflow_status": "answering",
+                "answer_epoch": 1,
+                "board_id": "b1",
+                "class_id": "c1",
+                "subject_id": "s1",
+                "chapter_id": None,
+            }
+        ),
+        lock_job_items=AsyncMock(
+            return_value=[
+                {
+                    "id": "item-1",
+                    "source_text": "Q1",
+                    "normalized_question": "q1",
+                    "item_status": "ready_to_answer",
+                    "answer_mode": "short",
+                }
+            ]
+        ),
+        mark_item_answering=AsyncMock(return_value=True),
+        finish_answers=AsyncMock(return_value="completed"),
+    )
+    service._candidate_request = AsyncMock(return_value={"id": "req-1"})
+    service._existing_completion = AsyncMock(return_value=False)
+    service._fail_item = AsyncMock()
+
+    retryable_err = DeepSeekProviderError(ProviderErrorCode.TIMEOUT, retryable=True)
+    service._answer_single_short_or_long = AsyncMock(side_effect=retryable_err)
+    service._ask = SimpleNamespace(
+        _source_policy=AsyncMock(return_value={"semantic_reuse_enabled": False}),
+        _bank=SimpleNamespace(
+            find_exact=AsyncMock(return_value=None),
+            find_exact_variation=AsyncMock(return_value=None),
+        ),
+        _retrieval=SimpleNamespace(retrieve=AsyncMock(return_value=SimpleNamespace(results=[]))),
+    )
+
+    with pytest.raises(DeepSeekProviderError) as exc_info:
+        await service.answer(session_id="sess-1", epoch=1)
+
+    assert exc_info.value.retryable is True
+    assert service._fail_item.await_count == 0

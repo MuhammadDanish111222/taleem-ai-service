@@ -14,6 +14,18 @@ from app.providers.ocr.base import OCRProviderError
 DEFAULT_GEMINI_OCR_MODEL = "gemini-3.6-flash"
 
 
+def _detect_mime_type(image_bytes: bytes, explicit_mime: str | None = None) -> str:
+    if explicit_mime and explicit_mime.strip():
+        return explicit_mime.strip()
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"RIFF") and len(image_bytes) >= 12 and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
 class GeminiOCRProvider:
     """Non-blocking Gemini Vision OCR provider extracting plain text from page images."""
 
@@ -37,12 +49,15 @@ class GeminiOCRProvider:
             raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
         return key
 
-    async def extract_image_text(self, image_bytes: bytes) -> str:
+    async def extract_image_text(
+        self, image_bytes: bytes, mime_type: str | None = None
+    ) -> str:
         """Sends an image to Gemini Vision generateContent and extracts English text."""
         if not image_bytes:
             return ""
         api_key = self._resolve_api_key()
         b64_image = base64.b64encode(image_bytes).decode("ascii")
+        resolved_mime = _detect_mime_type(image_bytes, mime_type)
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={api_key}"
         payload: dict[str, Any] = {
@@ -58,7 +73,7 @@ class GeminiOCRProvider:
                         },
                         {
                             "inline_data": {
-                                "mime_type": "image/png",
+                                "mime_type": resolved_mime,
                                 "data": b64_image,
                             }
                         },

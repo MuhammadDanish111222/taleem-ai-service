@@ -8,15 +8,7 @@ from app.services.ingestion.jsonl_chunks import (
 )
 from app.services.ingestion.token_count import EmbeddingTokenCounter
 
-
-class FakeTokenizer:
-    def encode(self, text: str, *, add_special_tokens: bool = False) -> list[int]:
-        return [ord(character) for character in text if not character.isspace()]
-
-
-COUNTER = EmbeddingTokenCounter(
-    "BAAI/bge-base-en-v1.5", "test", tokenizer=FakeTokenizer()
-)
+COUNTER = EmbeddingTokenCounter("voyage-4-lite", "voyage-4-lite-512-v1")
 
 
 def _row(visuals):
