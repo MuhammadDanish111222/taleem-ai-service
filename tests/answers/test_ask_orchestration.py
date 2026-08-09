@@ -124,15 +124,15 @@ class FakeRetrieval:
     def __init__(self, result):
         self.result = result
         self.calls = 0
-        self.semantic_calls = 0
+        self.embedding_calls = 0
 
     async def retrieve(self, *_args, **_kwargs):
         self.calls += 1
         return self.result
 
-    async def embed_query_for_approved_reuse(self, *_args, **_kwargs):
-        self.semantic_calls += 1
-        return [1.0] + [0.0] * 767
+    async def embed_live_query(self, *_args, **_kwargs):
+        self.embedding_calls += 1
+        return [1.0] + [0.0] * 511
 
 
 class FakePrompts:
@@ -395,7 +395,7 @@ async def test_semantic_reuse_is_disabled_without_evaluated_policy(conn):
         uid="student",
         tier=AccountTier.ANONYMOUS,
     )
-    assert retrieval.semantic_calls == 0
+    assert retrieval.embedding_calls == 1
     assert retrieval.calls == 1
     assert result.error_code == "NO_ACTIVE_CORPUS"
 
@@ -403,11 +403,11 @@ async def test_semantic_reuse_is_disabled_without_evaluated_policy(conn):
 @pytest.mark.asyncio
 async def test_semantic_repository_never_reuses_unapproved_rows(conn):
     revision_id = await create_approved(conn, "Define momentum.", "chapter-1")
-    vector = [1.0] + [0.0] * 767
+    vector = [1.0] + [0.0] * 511
     await conn.execute(
         """UPDATE question_bank_revisions
            SET review_status='pending',approved_by=NULL,approved_at=NULL,
-               embedding=$2::text::vector,embedding_status='embedded'
+               embedding=$2::text::halfvec,embedding_status='embedded'
            WHERE id=$1::uuid""",
         revision_id,
         str(vector),
@@ -573,7 +573,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
     )
     await conn.execute(
         """UPDATE rag_chunks SET
-             embedding=('[' || array_to_string(array_fill(0.0::float8,ARRAY[512]),',') || ']')::vector,
+             embedding=('[' || array_to_string(array_fill(0.0::float8,ARRAY[512]),',') || ']')::halfvec,
              embedding_status='embedded',embedding_model=$2,
              embedding_revision=$3,embedding_config_fingerprint=$4
            WHERE corpus_version_id=$1::uuid""",

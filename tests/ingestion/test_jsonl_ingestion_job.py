@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import asyncpg
 import pytest
 
+from app.providers.embeddings.voyage import MODEL_NAME
 from app.repositories.rag_repository import RagRepository
 from app.workers.handlers.jsonl_ingest import handle_jsonl_ingest
 
@@ -101,7 +102,7 @@ async def test_valid_jsonl_ingestion_job_execution(conn):
     assert cv_row["status"] == "building"
     assert cv_row["expected_chunk_count"] == 2
     assert cv_row["embedded_chunk_count"] == 0
-    assert cv_row["embedding_model"] == "BAAI/bge-base-en-v1.5"
+    assert cv_row["embedding_model"] == MODEL_NAME
 
     # 2. Assert rag_chunks rows stored with exact field mapping
     chunks = await conn.fetch(

@@ -23,7 +23,6 @@ from app.services.retrieval.evidence import (
     EvidenceResult,
     RetrievalChannel,
     RetrievalScope,
-    RetrievedEvidence,
     RetrievedVisual,
     classify_evidence,
 )
@@ -83,11 +82,18 @@ class RetrievalService:
     def _configuration_from_active_version(
         self, active_version: dict[str, Any]
     ) -> VoyageEmbeddingConfiguration:
-        return VoyageEmbeddingConfiguration(
+        configuration = VoyageEmbeddingConfiguration(
             model=active_version["embedding_model"],
             revision=active_version["embedding_revision"],
             dimensions=active_version["embedding_dim"],
+            normalize=bool(active_version["normalize_embeddings"]),
         )
+        stored_fingerprint = str(
+            active_version.get("embedding_config_fingerprint") or ""
+        )
+        if stored_fingerprint != configuration.fingerprint():
+            raise RetrievalConfigurationError("ACTIVE_CORPUS_CONFIGURATION_MISMATCH")
+        return configuration
 
     async def embed_live_query(
         self, question: str, scope: RetrievalScope
@@ -116,12 +122,6 @@ class RetrievalService:
         if len(vectors) != 1 or len(vectors[0]) != configuration.dimensions:
             raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
         return vectors[0]
-
-    async def embed_query_for_approved_reuse(
-        self, question: str, scope: RetrievalScope
-    ) -> list[float] | None:
-        """Embed only when an evaluated semantic-reuse policy explicitly enables it."""
-        return await self.embed_live_query(question, scope)
 
     async def retrieve(
         self,
@@ -260,71 +260,58 @@ class RetrievalService:
             allow_named_draft,
         )
 
+        row_lookup: dict[str, dict[str, Any]] = {}
+        for row in (*dense_rows, *expected_rows, *lexical_rows):
+            row_lookup.setdefault(row["citation_id"], row)
+
+        visual_map = await self._repo.get_eligible_retrieval_visuals(
+            list(row_lookup.keys())
+        )
+        citations: dict[str, Citation] = {}
+        for citation_id, row in row_lookup.items():
+            citations[citation_id] = Citation(
+                citation_id=citation_id,
+                content=row["content"],
+                chapter_id=row["chapter_id"],
+                topic_no=row["topic_no"],
+                topic_title=row["topic_title"],
+                page_start=row["page_start"],
+                page_end=row["page_end"],
+                visuals=tuple(
+                    RetrievedVisual(
+                        visual_id=visual["visual_id"],
+                        title=visual["title"],
+                        description=visual["description"],
+                        display_policy=visual["display_policy"],
+                    )
+                    for visual in visual_map.get(citation_id, [])
+                ),
+            )
+
         dense_hits = [
             RankedChannelHit(
-                citation_id=row["citation_id"],
-                channel_rank=idx + 1,
-                channel=RetrievalChannel.DENSE_CHUNK,
+                citation=citations[row["citation_id"]],
+                channel=RetrievalChannel.DENSE,
+                rank=idx + 1,
             )
             for idx, row in enumerate(dense_rows)
         ]
         expected_hits = [
             RankedChannelHit(
-                citation_id=row["citation_id"],
-                channel_rank=int(row["expected_question_rank"]),
-                channel=RetrievalChannel.DENSE_QUESTION,
+                citation=citations[row["citation_id"]],
+                channel=RetrievalChannel.EXPECTED_QUESTION,
+                rank=int(row["expected_question_rank"]),
             )
             for row in expected_rows
         ]
         lexical_hits = [
             RankedChannelHit(
-                citation_id=row["citation_id"],
-                channel_rank=idx + 1,
-                channel=RetrievalChannel.LEXICAL_BM25,
+                citation=citations[row["citation_id"]],
+                channel=RetrievalChannel.LEXICAL,
+                rank=idx + 1,
             )
             for idx, row in enumerate(lexical_rows)
         ]
 
-        fused = fuse_ranked_hits(dense_hits, expected_hits, lexical_hits)
-        row_lookup: dict[str, dict[str, Any]] = {}
-        for row in (*dense_rows, *expected_rows, *lexical_rows):
-            row_lookup.setdefault(row["citation_id"], row)
-
-        evidence: list[RetrievedEvidence] = []
-        for fused_hit in fused:
-            source_row = row_lookup.get(fused_hit.citation_id)
-            if source_row is None:
-                continue
-            visual_rows = await self._repo.get_approved_chunk_visuals(
-                corpus_version_id, source_row["citation_id"]
-            )
-            citation = Citation(
-                citation_id=source_row["citation_id"],
-                chapter_id=source_row["chapter_id"],
-                topic_no=source_row["topic_no"],
-                topic_title=source_row["topic_title"],
-                page_start=source_row["page_start"],
-                page_end=source_row["page_end"],
-                visuals=[
-                    RetrievedVisual(
-                        visual_id=v["visual_id"],
-                        title=v["title"],
-                        description=v["description"],
-                        display_policy=v["display_policy"],
-                        storage_provider=v["storage_provider"],
-                        storage_key=v["storage_key"],
-                    )
-                    for v in visual_rows
-                ],
-            )
-            evidence.append(
-                RetrievedEvidence(
-                    citation=citation,
-                    chunk_text=source_row["content"],
-                    final_rank=fused_hit.final_rank,
-                    rrf_score=fused_hit.rrf_score,
-                    channel_ranks=fused_hit.channel_ranks,
-                )
-            )
-
-        return classify_evidence(evidence)
+        fused = fuse_ranked_hits((*dense_hits, *expected_hits, *lexical_hits))
+        return classify_evidence(fused)

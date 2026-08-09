@@ -585,7 +585,7 @@ class RagRepository:
         result = await self.conn.execute(
             """
             UPDATE rag_chunks c
-            SET embedding = $3::text::vector, embedding_model = $5, embedding_revision = $6,
+            SET embedding = $3::text::halfvec, embedding_model = $5, embedding_revision = $6,
                 embedding_config_fingerprint = $7, embedding_input_hash = $4,
                 embedding_status = 'embedded', embedding_started_at = COALESCE(embedding_started_at, NOW()),
                 embedding_completed_at = NOW(), embedding_error_code = NULL
@@ -619,7 +619,7 @@ class RagRepository:
         result = await self.conn.execute(
             """
             UPDATE chunk_expected_questions q
-            SET embedding = $3::text::vector, embedding_model = $5, embedding_revision = $6,
+            SET embedding = $3::text::halfvec, embedding_model = $5, embedding_revision = $6,
                 embedding_config_fingerprint = $7, embedding_input_hash = $4,
                 embedding_status = 'embedded',
                 embedding_started_at = COALESCE(q.embedding_started_at, NOW()),
