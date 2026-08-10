@@ -389,7 +389,7 @@ async def test_visual_review_status_from_chunk_data():
                     "storage_key": "drive-key-v2",
                     "title": "Mitosis",
                     "description": "Cell division",
-                    # No review_status/display_policy — should default to 'approved'/'llm_decide'
+                    # No review_status/display_policy — should default to 'pending'/'llm_decide'
                 },
             ],
         }],
@@ -404,8 +404,8 @@ async def test_visual_review_status_from_chunk_data():
     assert v1_args[6] == "always_show", "display_policy should be 'always_show' from visual dict"
     assert v1_args[7] == "approved", "review_status should be 'approved' from visual dict"
 
-    # Visual 2: defaults to approved/llm_decide
+    # Visual 2: defaults to pending/llm_decide
     v2_args = visual_inserts[1]
     assert v2_args[1] == "v2"
     assert v2_args[6] == "llm_decide", "display_policy should default to 'llm_decide'"
-    assert v2_args[7] == "approved", "review_status should default to 'approved'"
+    assert v2_args[7] == "pending", "review_status should default to 'pending'"

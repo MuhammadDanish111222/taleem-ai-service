@@ -451,13 +451,13 @@ class RagRepository:
 
             # JSONL visual keys are persisted only in the service database.
             # Trusted Local Admin paired-import pipeline provides review_status
-            # and display_policy; visuals from this pipeline are pre-approved.
+            # and display_policy. Other generic imports default to 'pending'.
             for visual in chunk.get("visuals") or []:
                 title = visual["title"].strip()
                 description = visual["description"].strip()
                 visual_text = " ".join(f"{title} {description}".split()).lower()
-                review_status = visual.get("review_status", "approved")
-                display_policy = visual.get("display_policy", "llm_decide")
+                review_status = visual.get("review_status") or "pending"
+                display_policy = visual.get("display_policy") or "llm_decide"
                 await self.conn.execute(
                     """
                     INSERT INTO rag_visuals (

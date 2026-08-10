@@ -34,6 +34,17 @@ VALID_VISUAL_TYPES: Set[str] = {
     "chemical-structure",
     "equation",
 }
+VALID_REVIEW_STATUSES: Set[str] = {
+    "pending",
+    "approved",
+    "rejected",
+}
+VALID_DISPLAY_POLICIES: Set[str] = {
+    "always",
+    "always_show",
+    "llm_decide",
+    "never",
+}
 MAX_VISUAL_ID_LENGTH = 240
 MAX_VISUAL_TITLE_LENGTH = 240
 MAX_VISUAL_DESCRIPTION_LENGTH = 4000
@@ -446,6 +457,34 @@ async def validate_and_parse_jsonl(
                             "code": "JSONL_VALIDATION_FAILED",
                         }
                     )
+                if "review_status" in visual:
+                    review_status = visual.get("review_status")
+                    if (
+                        not isinstance(review_status, str)
+                        or review_status.strip().lower() not in VALID_REVIEW_STATUSES
+                    ):
+                        errors.append(
+                            {
+                                "row": row_idx,
+                                "field": "visuals.review_status",
+                                "reason": "invalid_review_status_enum",
+                                "code": "JSONL_VALIDATION_FAILED",
+                            }
+                        )
+                if "display_policy" in visual:
+                    display_policy = visual.get("display_policy")
+                    if (
+                        not isinstance(display_policy, str)
+                        or display_policy.strip().lower() not in VALID_DISPLAY_POLICIES
+                    ):
+                        errors.append(
+                            {
+                                "row": row_idx,
+                                "field": "visuals.display_policy",
+                                "reason": "invalid_display_policy_enum",
+                                "code": "JSONL_VALIDATION_FAILED",
+                            }
+                        )
                 for field, maximum in (
                     ("title", MAX_VISUAL_TITLE_LENGTH),
                     ("description", MAX_VISUAL_DESCRIPTION_LENGTH),
@@ -591,11 +630,15 @@ async def validate_and_parse_jsonl(
             ],
             "visuals": [
                 {
-                    "visual_id": visual["visual_id"].strip(),
-                    "visual_type": visual["visual_type"],
-                    "title": visual["title"].strip(),
-                    "description": visual["description"].strip(),
-                    "storage_key": visual["storage_key"].strip(),
+                    **{
+                        "visual_id": visual["visual_id"].strip(),
+                        "visual_type": visual["visual_type"],
+                        "title": visual["title"].strip(),
+                        "description": visual["description"].strip(),
+                        "storage_key": visual["storage_key"].strip(),
+                    },
+                    **({"review_status": visual["review_status"].strip().lower()} if "review_status" in visual and visual["review_status"] is not None else {}),
+                    **({"display_policy": visual["display_policy"].strip().lower()} if "display_policy" in visual and visual["display_policy"] is not None else {}),
                 }
                 for visual in row.get("visuals", [])
             ],
