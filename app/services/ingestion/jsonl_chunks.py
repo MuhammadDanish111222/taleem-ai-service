@@ -41,7 +41,6 @@ VALID_REVIEW_STATUSES: Set[str] = {
 }
 VALID_DISPLAY_POLICIES: Set[str] = {
     "always",
-    "always_show",
     "llm_decide",
     "never",
 }

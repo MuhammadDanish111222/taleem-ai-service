@@ -381,7 +381,7 @@ async def test_visual_review_status_from_chunk_data():
                     "title": "Cell Diagram",
                     "description": "Eukaryotic cell",
                     "review_status": "approved",
-                    "display_policy": "always_show",
+                    "display_policy": "always",
                 },
                 {
                     "visual_id": "v2",
@@ -397,11 +397,11 @@ async def test_visual_review_status_from_chunk_data():
 
     assert len(visual_inserts) == 2, "Expected 2 visual inserts"
 
-    # Visual 1: explicitly approved with always_show
+    # Visual 1: explicitly approved with always
     v1_args = visual_inserts[0]
     # Args order: chunk_id, visual_id, visual_type, storage_key, title, description, display_policy, review_status, visual_text_hash
     assert v1_args[1] == "v1"
-    assert v1_args[6] == "always_show", "display_policy should be 'always_show' from visual dict"
+    assert v1_args[6] == "always", "display_policy should be 'always' from visual dict"
     assert v1_args[7] == "approved", "review_status should be 'approved' from visual dict"
 
     # Visual 2: defaults to pending/llm_decide

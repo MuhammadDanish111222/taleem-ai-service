@@ -115,7 +115,7 @@ async def test_jsonl_accepts_each_supported_visual_type(visual_type: str):
 
 @pytest.mark.asyncio
 async def test_jsonl_validator_preserves_review_status_and_display_policy():
-    """A. Enriched visual with review_status=approved and display_policy=always_show:
+    """A. Enriched visual with review_status=approved and display_policy=always:
     After validate_and_parse_jsonl(), both fields are present and preserved."""
     chunks, errors = await validate_and_parse_jsonl(
         _row(
@@ -127,7 +127,7 @@ async def test_jsonl_validator_preserves_review_status_and_display_policy():
                     "description": "A block with arrows.",
                     "storage_key": "server-only-drive-key",
                     "review_status": "approved",
-                    "display_policy": "always_show",
+                    "display_policy": "always",
                 }
             ]
         ),
@@ -139,7 +139,7 @@ async def test_jsonl_validator_preserves_review_status_and_display_policy():
     assert len(chunks) == 1
     visual = chunks[0]["visuals"][0]
     assert visual["review_status"] == "approved"
-    assert visual["display_policy"] == "always_show"
+    assert visual["display_policy"] == "always"
 
 
 @pytest.mark.asyncio
@@ -197,8 +197,9 @@ async def test_jsonl_validator_rejects_invalid_review_status():
 
 
 @pytest.mark.asyncio
-async def test_jsonl_validator_rejects_invalid_display_policy():
-    """D. Invalid display_policy is safely rejected with clear error."""
+@pytest.mark.parametrize("invalid_policy", ["always_show", "show_on_mondays", "auto"])
+async def test_jsonl_validator_rejects_invalid_display_policy(invalid_policy: str):
+    """D. Invalid display_policy (including 'always_show') is safely rejected with clear error."""
     _, errors = await validate_and_parse_jsonl(
         _row(
             [
@@ -208,7 +209,7 @@ async def test_jsonl_validator_rejects_invalid_display_policy():
                     "title": "Force diagram",
                     "description": "A block with arrows.",
                     "storage_key": "server-only-drive-key",
-                    "display_policy": "show_on_mondays",
+                    "display_policy": invalid_policy,
                 }
             ]
         ),
