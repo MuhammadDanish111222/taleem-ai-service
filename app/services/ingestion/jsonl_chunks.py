@@ -252,7 +252,7 @@ async def validate_and_parse_jsonl(
                 )
                 scope_values[field] = None
             else:
-                scope_values[field] = value.strip()
+                scope_values[field] = value.strip().lower()
 
         board_id = scope_values["board_id"]
         class_id = scope_values["class_id"]

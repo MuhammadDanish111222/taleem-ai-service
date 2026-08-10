@@ -27,7 +27,7 @@ async def init_db_pool(dsn: Optional[str] = None) -> asyncpg.Pool:
         await register_vector(conn)
 
     _pool = await asyncpg.create_pool(
-        dsn=connection_url, min_size=2, max_size=10, init=init_connection
+        dsn=connection_url, min_size=2, max_size=10, statement_cache_size=0, init=init_connection
     )
     logger.info("Database connection pool initialized successfully.")
     return _pool
