@@ -148,6 +148,8 @@ async def handle_jsonl_ingest(
             "corpus_version_id": corpus_version_id,
             "embedding_config_fingerprint": configuration.fingerprint(),
             "embedding_input_fingerprint": input_fingerprint,
+            "auto_promote": True,
+            "chapter_id": chapter_id,
         }
         generation_key = f"{corpus_version_id}:{input_fingerprint}"
         queue = JobQueueService(conn)

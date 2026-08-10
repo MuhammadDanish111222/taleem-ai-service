@@ -14,7 +14,10 @@ class CorpusIncompleteError(RuntimeError):
 
 
 async def confirm_corpus_completeness(
-    corpus_version_id: str, conn: asyncpg.Connection
+    corpus_version_id: str,
+    conn: asyncpg.Connection,
+    auto_promote: bool = False,
+    target_chapter_id: str | None = None,
 ) -> Dict[str, Any]:
     repo = RagRepository(conn)
     await repo.refresh_embedding_counts(corpus_version_id)
@@ -24,43 +27,37 @@ async def confirm_corpus_completeness(
             ",".join(result["reasons"]) or "QA_READY_TRANSITION_REJECTED"
         )
 
-    # Check if there is an active corpus version for this subject scope
-    c_info = await conn.fetchrow(
-        """SELECT c.board_id, c.class_id, c.subject_id, cv.status
-           FROM rag_corpus_versions cv
-           JOIN rag_corpora c ON c.id = cv.corpus_id
-           WHERE cv.id = $1::uuid;""",
-        corpus_version_id,
-    )
-    if c_info:
-        active_ver = await repo.get_active_corpus_version(
-            c_info["board_id"], c_info["class_id"], c_info["subject_id"]
+    if auto_promote and target_chapter_id:
+        c_info = await conn.fetchrow(
+            """SELECT c.board_id, c.class_id, c.subject_id, cv.status
+               FROM rag_corpus_versions cv
+               JOIN rag_corpora c ON c.id = cv.corpus_id
+               WHERE cv.id = $1::uuid;""",
+            corpus_version_id,
         )
-        if active_ver and str(active_ver["id"]) != corpus_version_id:
-            ch_row = await conn.fetchrow(
-                "SELECT DISTINCT chapter_id FROM rag_chunks WHERE corpus_version_id = $1::uuid LIMIT 1;",
-                corpus_version_id,
+        if c_info:
+            active_ver = await repo.get_active_corpus_version(
+                c_info["board_id"], c_info["class_id"], c_info["subject_id"]
             )
-            if ch_row and ch_row["chapter_id"]:
-                chapter_id = ch_row["chapter_id"]
+            if active_ver and str(active_ver["id"]) != corpus_version_id:
                 promotion = await repo.promote_chapter_from_temp_to_active(
                     temp_version_id=corpus_version_id,
                     active_version_id=str(active_ver["id"]),
                     board_id=c_info["board_id"],
                     class_id=c_info["class_id"],
                     subject_id=c_info["subject_id"],
-                    chapter_id=chapter_id,
+                    chapter_id=target_chapter_id,
                 )
                 from app.services.retrieval.active_version_cache import (
                     get_active_corpus_version_cache,
                 )
+
                 await get_active_corpus_version_cache().invalidate(
                     c_info["board_id"], c_info["class_id"], c_info["subject_id"]
                 )
                 return {**result, "promoted": True, "promotion": promotion}
 
     return result
-
 
 
 async def handle_corpus_completeness(
@@ -77,4 +74,9 @@ async def handle_corpus_completeness(
         != str(payload.get("embedding_input_fingerprint") or "")
     ):
         return {"status": "stale_generation"}
-    return await confirm_corpus_completeness(corpus_version_id, conn)
+    auto_promote = bool(payload.get("auto_promote"))
+    chapter_id = str(payload.get("chapter_id")) if payload.get("chapter_id") else None
+    return await confirm_corpus_completeness(
+        corpus_version_id, conn, auto_promote=auto_promote, target_chapter_id=chapter_id
+    )
+

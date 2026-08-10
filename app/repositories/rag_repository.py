@@ -1150,116 +1150,163 @@ class RagRepository:
     ) -> Dict[str, Any]:
         """Atomically moves chapter documents/chunks from temp building corpus into active corpus.
 
-        1. Hard-verifies matching embedding configuration between temp and active versions.
-        2. Cleans up citations, visuals, and LLM-generated Q&A for chapter.
-        3. If replacing: deletes old chapter chunks & document versions from active version.
-        4. Updates corpus_version_id = active_version_id on temp document version and chunks.
-        5. Reconciles active version counts and active fingerprint.
-        6. Invalidates active QA approvals.
-        7. Deletes empty temp building version.
+        1. Explicitly executes inside ONE database transaction.
+        2. Hard-verifies temp corpus contains EXACTLY ONE chapter matching chapter_id.
+        3. Hard-verifies matching embedding configuration between temp and active versions.
+        4. Cleans up citations, visuals, and LLM-generated Q&A for chapter.
+        5. If replacing: deletes old chapter chunks & document versions from active version.
+        6. Updates corpus_version_id = active_version_id on temp document version and chunks.
+        7. Reconciles active version counts and active fingerprint.
+        8. Invalidates active QA approvals.
+        9. Deletes empty temp building version.
         """
-        temp_ver = await self.conn.fetchrow(
-            "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", temp_version_id
-        )
-        active_ver = await self.conn.fetchrow(
-            "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", active_version_id
-        )
-        if not temp_ver or not active_ver:
-            raise ValueError("CORPUS_VERSION_NOT_FOUND")
-
-        temp_cfg = (
-            temp_ver["embedding_model"],
-            temp_ver["embedding_revision"],
-            temp_ver["embedding_dim"],
-            temp_ver["embedding_config_fingerprint"],
-            temp_ver["normalize_embeddings"],
-        )
-        active_cfg = (
-            active_ver["embedding_model"],
-            active_ver["embedding_revision"],
-            active_ver["embedding_dim"],
-            active_ver["embedding_config_fingerprint"],
-            active_ver["normalize_embeddings"],
-        )
-        if temp_cfg != active_cfg:
-            raise ValueError("EMBEDDING_CONFIGURATION_MISMATCH_CANNOT_PROMOTE")
-
-        from app.repositories.question_bank_repository import QuestionBankRepository
-
-        bank_repo = QuestionBankRepository(self.conn)
-
-        old_chunks = await self.conn.fetch(
-            "SELECT id::text FROM rag_chunks WHERE corpus_version_id = $1::uuid AND chapter_id = $2;",
-            active_version_id,
-            chapter_id,
-        )
-        old_chunk_ids = [r["id"] for r in old_chunks]
-
-        old_visual_ids: list[str] = []
-        if old_chunk_ids:
-            old_visuals = await self.conn.fetch(
-                "SELECT id::text FROM rag_visuals WHERE chunk_id = ANY($1::uuid[]);",
-                old_chunk_ids,
+        async with self.conn.transaction():
+            temp_ver = await self.conn.fetchrow(
+                "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", temp_version_id
             )
-            old_visual_ids = [r["id"] for r in old_visuals]
+            active_ver = await self.conn.fetchrow(
+                "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", active_version_id
+            )
+            if not temp_ver or not active_ver:
+                raise ValueError("CORPUS_VERSION_NOT_FOUND")
 
-        qa_summary = await bank_repo.cleanup_chapter_qa(
-            board_id=board_id,
-            class_id=class_id,
-            subject_id=subject_id,
-            chapter_id=chapter_id,
-            old_chunk_ids=old_chunk_ids,
-            old_visual_ids=old_visual_ids,
-        )
+            if active_ver["status"] != "active":
+                raise ValueError("TARGET_CORPUS_NOT_ACTIVE")
 
-        if old_chunk_ids:
-            await self.conn.execute(
-                "DELETE FROM rag_chunks WHERE corpus_version_id = $1::uuid AND chapter_id = $2;",
+            # HARD VERIFY: Temp corpus must contain EXACTLY ONE chapter matching target chapter_id
+            temp_chapters = await self.conn.fetch(
+                "SELECT DISTINCT chapter_id FROM rag_chunks WHERE corpus_version_id = $1::uuid AND chapter_id IS NOT NULL AND btrim(chapter_id) <> '';",
+                temp_version_id,
+            )
+            chapter_list = [r["chapter_id"] for r in temp_chapters if r["chapter_id"]]
+            if len(chapter_list) != 1 or chapter_list[0] != chapter_id:
+                raise ValueError("TEMP_CORPUS_MUST_CONTAIN_EXACTLY_ONE_CHAPTER")
+
+            # HARD VERIFY: Temp document versions must belong ONLY to this chapter resource
+            temp_docs = await self.conn.fetch(
+                "SELECT resource_id FROM rag_document_versions WHERE corpus_version_id = $1::uuid;",
+                temp_version_id,
+            )
+            expected_resource = f"jsonl:chapter:{chapter_id}"
+            if not temp_docs or any(d["resource_id"] != expected_resource for d in temp_docs):
+                raise ValueError("TEMP_DOCUMENT_VERSION_MISMATCH")
+
+            temp_cfg = (
+                temp_ver["embedding_model"],
+                temp_ver["embedding_revision"],
+                temp_ver["embedding_dim"],
+                temp_ver["embedding_config_fingerprint"],
+                temp_ver["normalize_embeddings"],
+            )
+            active_cfg = (
+                active_ver["embedding_model"],
+                active_ver["embedding_revision"],
+                active_ver["embedding_dim"],
+                active_ver["embedding_config_fingerprint"],
+                active_ver["normalize_embeddings"],
+            )
+            if temp_cfg != active_cfg:
+                raise ValueError("EMBEDDING_CONFIGURATION_MISMATCH_CANNOT_PROMOTE")
+
+            from app.repositories.question_bank_repository import QuestionBankRepository
+
+            bank_repo = QuestionBankRepository(self.conn)
+
+            old_chunks = await self.conn.fetch(
+                "SELECT id::text FROM rag_chunks WHERE corpus_version_id = $1::uuid AND chapter_id = $2;",
                 active_version_id,
                 chapter_id,
             )
-            await self.conn.execute(
-                """DELETE FROM rag_document_versions
-                   WHERE corpus_version_id = $1::uuid AND resource_id = $2;""",
-                active_version_id,
-                f"jsonl:chapter:{chapter_id}",
+            old_chunk_ids = [r["id"] for r in old_chunks]
+
+            old_visual_ids: list[str] = []
+            if old_chunk_ids:
+                old_visuals = await self.conn.fetch(
+                    "SELECT id::text FROM rag_visuals WHERE chunk_id = ANY($1::uuid[]);",
+                    old_chunk_ids,
+                )
+                old_visual_ids = [r["id"] for r in old_visuals]
+
+            qa_summary = await bank_repo.cleanup_chapter_qa(
+                board_id=board_id,
+                class_id=class_id,
+                subject_id=subject_id,
+                chapter_id=chapter_id,
+                old_chunk_ids=old_chunk_ids,
+                old_visual_ids=old_visual_ids,
             )
 
-        await self.conn.execute(
-            """UPDATE rag_document_versions
-               SET corpus_version_id = $2::uuid
-               WHERE corpus_version_id = $1::uuid;""",
-            temp_version_id,
-            active_version_id,
-        )
-        await self.conn.execute(
-            """UPDATE rag_chunks
-               SET corpus_version_id = $2::uuid
-               WHERE corpus_version_id = $1::uuid;""",
-            temp_version_id,
-            active_version_id,
-        )
+            if old_chunk_ids:
+                await self.conn.execute(
+                    "DELETE FROM rag_chunks WHERE corpus_version_id = $1::uuid AND chapter_id = $2;",
+                    active_version_id,
+                    chapter_id,
+                )
+                await self.conn.execute(
+                    """DELETE FROM rag_document_versions
+                       WHERE corpus_version_id = $1::uuid AND resource_id = $2;""",
+                    active_version_id,
+                    f"jsonl:chapter:{chapter_id}",
+                )
 
-        await self.refresh_embedding_counts(active_version_id)
-        await self.refresh_embedding_input_fingerprint(active_version_id, allow_active=True)
+            await self.conn.execute(
+                """UPDATE rag_document_versions
+                   SET corpus_version_id = $2::uuid
+                   WHERE corpus_version_id = $1::uuid;""",
+                temp_version_id,
+                active_version_id,
+            )
+            await self.conn.execute(
+                """UPDATE rag_chunks
+                   SET corpus_version_id = $2::uuid
+                   WHERE corpus_version_id = $1::uuid;""",
+                temp_version_id,
+                active_version_id,
+            )
 
-        await self.conn.execute(
-            """UPDATE rag_corpus_qa_approvals
-               SET invalidated_at = NOW(), invalidated_reason = 'chapter_promoted'
-               WHERE corpus_version_id = $1::uuid AND invalidated_at IS NULL;""",
-            active_version_id,
+            await self.refresh_embedding_counts(active_version_id)
+            await self.refresh_embedding_input_fingerprint(active_version_id, allow_active=True)
+
+            await self.conn.execute(
+                """UPDATE rag_corpus_qa_approvals
+                   SET invalidated_at = NOW(), invalidated_reason = 'chapter_promoted'
+                   WHERE corpus_version_id = $1::uuid AND invalidated_at IS NULL;""",
+                active_version_id,
+            )
+
+            await self.conn.execute(
+                "DELETE FROM rag_corpus_versions WHERE id = $1::uuid;", temp_version_id
+            )
+
+            return {
+                "status": "promoted",
+                "active_version_id": active_version_id,
+                "chapter_id": chapter_id,
+                "qa_summary": qa_summary,
+            }
+
+    async def get_chapter_visuals_internal(
+        self, *, board_id: str, class_id: str, subject_id: str, chapter_id: str
+    ) -> List[Dict[str, Any]]:
+        """Trusted internal query returning active chapter visuals and their real Drive storage keys."""
+        rows = await self.conn.fetch(
+            """
+            SELECT v.visual_id, v.title, v.description, v.storage_key, v.review_status
+            FROM rag_visuals v
+            JOIN rag_chunks c ON c.id = v.chunk_id
+            JOIN rag_corpus_versions cv ON cv.id = c.corpus_version_id
+            JOIN rag_corpora corp ON corp.id = cv.corpus_id
+            WHERE corp.board_id = $1 AND corp.class_id = $2 AND corp.subject_id = $3
+              AND cv.status = 'active'
+              AND c.chapter_id = $4;
+            """,
+            board_id,
+            class_id,
+            subject_id,
+            chapter_id,
         )
+        return [dict(r) for r in rows]
 
-        await self.conn.execute(
-            "DELETE FROM rag_corpus_versions WHERE id = $1::uuid;", temp_version_id
-        )
-
-        return {
-            "status": "promoted",
-            "active_version_id": active_version_id,
-            "chapter_id": chapter_id,
-            "qa_summary": qa_summary,
-        }
 
     async def delete_chapter_from_active(
         self,

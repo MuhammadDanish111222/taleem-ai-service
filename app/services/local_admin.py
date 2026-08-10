@@ -671,6 +671,16 @@ class LocalAdminService:
             })
         return chapters
 
+    async def get_chapter_visuals(
+        self, *, scope: dict[str, str], chapter_id: str
+    ) -> list[dict[str, Any]]:
+        return await self.repo.get_chapter_visuals_internal(
+            board_id=scope["board_id"],
+            class_id=scope["class_id"],
+            subject_id=scope["subject_id"],
+            chapter_id=chapter_id,
+        )
+
     async def delete_chapter(
         self, *, scope: dict[str, str], chapter_id: str, actor_id: str, request_id: str
     ) -> dict[str, Any]:
