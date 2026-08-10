@@ -158,3 +158,162 @@ async def test_qa_cleanup_distinction():
         for q in queries
     )
     assert deleted_visual_links, "Must remove visual links referencing deleted visuals"
+
+
+@pytest.mark.asyncio
+async def test_fresh_temp_corpus_for_active_subject():
+    """When an active corpus exists, create_building_corpus_version always creates a fresh version
+    rather than reusing any existing building/qa_ready draft."""
+    queries = []
+
+    class MockConn:
+        async def execute(self, query, *args):
+            queries.append(("execute", query, args))
+
+        async def fetchrow(self, query, *args):
+            queries.append(("fetchrow", query, args))
+            if "FOR UPDATE" in query and "rag_corpora" in query:
+                return None  # Lock acquired
+            if "MAX(version_no)" in query:
+                return {"max_v": 3}  # Already has 3 versions
+            if "INSERT INTO rag_corpus_versions" in query:
+                return {
+                    "id": "fresh-building-version",
+                    "corpus_id": "corpus-1",
+                    "version_no": 4,
+                    "status": "building",
+                    "embedding_model": "voyage-3-lite",
+                    "embedding_revision": "v1",
+                    "embedding_dim": 512,
+                    "embedding_config_fingerprint": "fp1",
+                    "normalize_embeddings": True,
+                    "query_instruction": None,
+                }
+            return None
+
+    repo = RagRepository(MockConn())  # type: ignore
+    result = await repo.create_building_corpus_version(
+        corpus_id="corpus-1",
+        embedding_model="voyage-3-lite",
+        embedding_revision="v1",
+        embedding_dim=512,
+        embedding_config_fingerprint="fp1",
+        normalize_embeddings=True,
+    )
+
+    assert result["id"] == "fresh-building-version"
+    assert result["version_no"] == 4
+    assert result["status"] == "building"
+
+    # Verify it did NOT attempt to look up existing building/qa_ready versions
+    select_building_or_qa = [
+        q for q in queries
+        if "status = 'building'" in q[1] or "status = 'qa_ready'" in q[1]
+    ]
+    assert len(select_building_or_qa) == 0, (
+        "create_building_corpus_version must NOT look for existing building/qa_ready versions"
+    )
+
+
+@pytest.mark.asyncio
+async def test_successful_promotion_deletes_old_and_moves_new_chunks():
+    """Verify that successful promotion deletes old chapter chunks from active version
+    and moves new chunks from temp to active version."""
+    queries = []
+
+    class MockConn:
+        def transaction(self):
+            return MockTx()
+
+        async def fetchrow(self, query, *args):
+            queries.append(("fetchrow", query, args))
+            if "FOR UPDATE" in query:
+                if args[0] == "temp-v":
+                    return {
+                        "id": "temp-v",
+                        "status": "building",
+                        "embedding_model": "voyage-3-lite",
+                        "embedding_revision": "v1",
+                        "embedding_dim": 512,
+                        "embedding_config_fingerprint": "fp_same",
+                        "normalize_embeddings": True,
+                    }
+                if args[0] == "active-v":
+                    return {
+                        "id": "active-v",
+                        "status": "active",
+                        "embedding_model": "voyage-3-lite",
+                        "embedding_revision": "v1",
+                        "embedding_dim": 512,
+                        "embedding_config_fingerprint": "fp_same",
+                        "normalize_embeddings": True,
+                    }
+            if "expected_chunk_count" in query or "embedded_chunk_count" in query:
+                return {
+                    "expected_chunk_count": 5,
+                    "embedded_chunk_count": 5,
+                    "expected_question_count": 10,
+                    "embedded_question_count": 10,
+                }
+            return None
+
+        async def fetch(self, query, *args):
+            queries.append(("fetch", query, args))
+            if "DISTINCT chapter_id" in query:
+                return [{"chapter_id": "ch01"}]
+            if "rag_document_versions" in query and "temp-v" in str(args):
+                return [{"resource_id": "jsonl:chapter:ch01"}]
+            if "rag_chunks" in query and "id::text" in query and "active-v" in str(args):
+                return [{"id": "old-chunk-1"}, {"id": "old-chunk-2"}]
+            if "rag_visuals" in query and "id::text" in query:
+                return [{"id": "old-vis-1"}]
+            return []
+
+        async def fetchval(self, query, *args):
+            queries.append(("fetchval", query, args))
+            if "COUNT(*)" in query:
+                return 0
+            return 0
+
+        async def execute(self, query, *args):
+            queries.append(("execute", query, args))
+            return "UPDATE 1"
+
+    repo = RagRepository(MockConn())  # type: ignore
+    await repo.promote_chapter_from_temp_to_active(
+        temp_version_id="temp-v",
+        active_version_id="active-v",
+        board_id="fbise",
+        class_id="class-9",
+        subject_id="chemistry",
+        chapter_id="ch01",
+    )
+
+    # Verify old chapter chunks were deleted
+    delete_chunk_queries = [
+        q for q in queries
+        if q[0] == "execute"
+        and "DELETE" in q[1]
+        and "rag_chunks" in q[1]
+        and "active-v" in str(q[2])
+    ]
+    assert len(delete_chunk_queries) > 0, "Must delete old chapter chunks from active version"
+
+    # Verify new chunks were moved from temp to active
+    update_chunk_queries = [
+        q for q in queries
+        if q[0] == "execute"
+        and "UPDATE" in q[1]
+        and "rag_chunks" in q[1]
+        and "corpus_version_id" in q[1]
+    ]
+    assert len(update_chunk_queries) > 0, "Must move temp chunks to active version"
+
+    # Verify temp version was deleted
+    delete_temp_queries = [
+        q for q in queries
+        if q[0] == "execute"
+        and "DELETE" in q[1]
+        and "rag_corpus_versions" in q[1]
+    ]
+    assert len(delete_temp_queries) > 0, "Must delete temp building corpus version after promotion"

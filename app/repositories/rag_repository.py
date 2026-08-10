@@ -200,6 +200,54 @@ class RagRepository:
         )
         return dict(new_version)
 
+    async def create_building_corpus_version(
+        self,
+        corpus_id: str,
+        embedding_model: str = MODEL_NAME,
+        embedding_revision: str = MODEL_REVISION,
+        embedding_dim: int = EMBEDDING_DIMENSIONS,
+        embedding_config_fingerprint: str = "",
+        normalize_embeddings: bool = True,
+        query_instruction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Always creates a fresh 'building' corpus version for the given corpus.
+
+        Used for chapter-only imports on subjects that already have an active version,
+        guaranteeing an isolated temp corpus that won't reuse stale building/qa_ready drafts.
+        """
+        await self.conn.execute(
+            "SELECT id FROM rag_corpora WHERE id = $1::uuid FOR UPDATE;", corpus_id
+        )
+        max_v_row = await self.conn.fetchrow(
+            "SELECT MAX(version_no) as max_v FROM rag_corpus_versions WHERE corpus_id = $1::uuid;",
+            corpus_id,
+        )
+        max_v = (
+            max_v_row["max_v"] if max_v_row and max_v_row["max_v"] is not None else 0
+        )
+        new_version_no = max_v + 1
+
+        insert_version_query = """
+        INSERT INTO rag_corpus_versions (
+            corpus_id, version_no, embedding_model, embedding_revision, embedding_dim,
+            normalize_embeddings, query_instruction, embedding_config_fingerprint, status
+        )
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, 'building')
+        RETURNING *;
+        """
+        new_version = await self.conn.fetchrow(
+            insert_version_query,
+            corpus_id,
+            new_version_no,
+            embedding_model,
+            embedding_revision,
+            embedding_dim,
+            normalize_embeddings,
+            query_instruction,
+            embedding_config_fingerprint,
+        )
+        return dict(new_version)
+
     async def create_corpus_version(
         self,
         corpus_id: str,

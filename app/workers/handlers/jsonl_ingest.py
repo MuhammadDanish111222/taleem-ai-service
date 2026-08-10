@@ -102,18 +102,31 @@ async def handle_jsonl_ingest(
             revision=settings.EMBEDDING_MODEL_REVISION,
             dimensions=settings.EMBEDDING_DIM,
         )
-        corpus_ver = await repo.get_or_create_building_corpus_version(
-            board_id,
-            class_id,
-            subject_id,
-            embedding_model=settings.EMBEDDING_MODEL,
-            embedding_revision=settings.EMBEDDING_MODEL_REVISION,
-            embedding_dim=settings.EMBEDDING_DIM,
-            embedding_config_fingerprint=configuration.fingerprint(),
-            normalize_embeddings=configuration.normalize,
-            query_instruction=None,
-            require_existing_draft_after_activation=False,
-        )
+        active_ver = await repo.get_active_corpus_version(board_id, class_id, subject_id)
+        if active_ver:
+            corpus = await repo.get_or_create_corpus(board_id, class_id, subject_id)
+            corpus_ver = await repo.create_building_corpus_version(
+                corpus_id=corpus["id"],
+                embedding_model=settings.EMBEDDING_MODEL,
+                embedding_revision=settings.EMBEDDING_MODEL_REVISION,
+                embedding_dim=settings.EMBEDDING_DIM,
+                embedding_config_fingerprint=configuration.fingerprint(),
+                normalize_embeddings=configuration.normalize,
+                query_instruction=None,
+            )
+        else:
+            corpus_ver = await repo.get_or_create_building_corpus_version(
+                board_id,
+                class_id,
+                subject_id,
+                embedding_model=settings.EMBEDDING_MODEL,
+                embedding_revision=settings.EMBEDDING_MODEL_REVISION,
+                embedding_dim=settings.EMBEDDING_DIM,
+                embedding_config_fingerprint=configuration.fingerprint(),
+                normalize_embeddings=configuration.normalize,
+                query_instruction=None,
+                require_existing_draft_after_activation=False,
+            )
         corpus_version_id = str(corpus_ver["id"])
 
         # Create/upsert document version for this chapter
