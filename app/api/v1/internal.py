@@ -751,6 +751,13 @@ async def local_admin_rag(
             service = LocalAdminService(conn)
             if request.operation == "overview":
                 return await service.overview(scope)
+            if request.operation == "delete_chapter":
+                return await service.delete_chapter(
+                    scope=scope,
+                    chapter_id=request.chapter_id or "",
+                    actor_id=auth_context.uid,
+                    request_id=auth_context.request_id,
+                )
             if request.operation == "visual_stream_ref":
                 return await service.visual_stream_reference(
                     version_id=request.corpus_version_id or "",

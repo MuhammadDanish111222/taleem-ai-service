@@ -514,3 +514,85 @@ class QuestionBankRepository:
                 visual_id,
                 order,
             )
+
+    async def cleanup_chapter_qa(
+        self,
+        *,
+        board_id: str,
+        class_id: str,
+        subject_id: str,
+        chapter_id: str,
+        old_chunk_ids: Iterable[str] = (),
+        old_visual_ids: Iterable[str] = (),
+    ) -> dict[str, int]:
+        """Cleans up citations/visuals for manual Q&A and deletes LLM-generated Q&A for a chapter."""
+        chunk_uuids = [str(cid) for cid in old_chunk_ids if cid]
+        visual_uuids = [str(vid) for vid in old_visual_ids if vid]
+
+        removed_citations = 0
+        if chunk_uuids:
+            res = await self.conn.execute(
+                "DELETE FROM question_bank_revision_citations WHERE chunk_id = ANY($1::uuid[])",
+                chunk_uuids,
+            )
+            removed_citations = int(res.split()[-1]) if res else 0
+
+        removed_visual_links = 0
+        if visual_uuids:
+            res = await self.conn.execute(
+                "DELETE FROM question_bank_revision_visuals WHERE visual_id = ANY($1::uuid[])",
+                visual_uuids,
+            )
+            removed_visual_links = int(res.split()[-1]) if res else 0
+
+        # Find LLM-generated Q&A for this exact scope and chapter
+        gen_revisions = await self.conn.fetch(
+            """SELECT id::text AS revision_id, question_id::text
+               FROM question_bank_revisions
+               WHERE board_id = $1 AND class_id = $2 AND subject_id = $3
+                 AND chapter_id = $4 AND source = 'generated_candidate'""",
+            board_id,
+            class_id,
+            subject_id,
+            chapter_id,
+        )
+
+        deleted_revisions = 0
+        deleted_questions = 0
+        for row in gen_revisions:
+            rev_id = row["revision_id"]
+            q_id = row["question_id"]
+
+            await self.conn.execute(
+                "DELETE FROM question_bank_revision_citations WHERE revision_id = $1::uuid", rev_id
+            )
+            await self.conn.execute(
+                "DELETE FROM question_bank_revision_visuals WHERE revision_id = $1::uuid", rev_id
+            )
+            await self.conn.execute(
+                "DELETE FROM question_bank_mcq_options WHERE revision_id = $1::uuid", rev_id
+            )
+            await self.conn.execute(
+                "DELETE FROM question_bank_variations WHERE revision_id = $1::uuid", rev_id
+            )
+            await self.conn.execute(
+                "DELETE FROM question_bank_revisions WHERE id = $1::uuid", rev_id
+            )
+            deleted_revisions += 1
+
+            remaining = await self.conn.fetchval(
+                "SELECT COUNT(*) FROM question_bank_revisions WHERE question_id = $1::uuid", q_id
+            )
+            if remaining == 0:
+                await self.conn.execute(
+                    "DELETE FROM question_bank_questions WHERE id = $1::uuid", q_id
+                )
+                deleted_questions += 1
+
+        return {
+            "removed_citations": removed_citations,
+            "removed_visual_links": removed_visual_links,
+            "deleted_llm_revisions": deleted_revisions,
+            "deleted_llm_questions": deleted_questions,
+        }
+

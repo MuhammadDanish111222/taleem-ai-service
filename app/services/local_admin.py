@@ -615,6 +615,97 @@ class LocalAdminService:
             "source_corpus_version_id": source_version_id,
         }
 
+    async def list_chapters(self, scope: dict[str, str]) -> list[dict[str, Any]]:
+        active_ver = await self.repo.get_active_corpus_version(
+            scope["board_id"], scope["class_id"], scope["subject_id"]
+        )
+        if not active_ver:
+            # Check for building version if active doesn't exist yet
+            row = await self.conn.fetchrow(
+                """SELECT cv.id FROM rag_corpus_versions cv JOIN rag_corpora c ON c.id=cv.corpus_id
+                   WHERE c.board_id=$1 AND c.class_id=$2 AND c.subject_id=$3 AND cv.status IN ('building', 'qa_ready')
+                   ORDER BY cv.version_no DESC LIMIT 1""",
+                scope["board_id"],
+                scope["class_id"],
+                scope["subject_id"],
+            )
+            if not row:
+                return []
+            version_id = str(row["id"])
+        else:
+            version_id = str(active_ver["id"])
+
+        rows = await self.conn.fetch(
+            """SELECT chapter_id,
+                      COUNT(*) AS chunk_count,
+                      COUNT(*) FILTER (WHERE embedding_status = 'embedded') AS embedded_chunk_count,
+                      COUNT(*) FILTER (WHERE embedding_status = 'pending') AS pending_chunk_count,
+                      COUNT(*) FILTER (WHERE embedding_status = 'failed') AS failed_chunk_count
+               FROM rag_chunks
+               WHERE corpus_version_id = $1::uuid AND chapter_id IS NOT NULL AND btrim(chapter_id) <> ''
+               GROUP BY chapter_id
+               ORDER BY chapter_id""",
+            version_id,
+        )
+        chapters = []
+        for row in rows:
+            ch_id = row["chapter_id"]
+            total = row["chunk_count"]
+            embedded = row["embedded_chunk_count"]
+            pending = row["pending_chunk_count"]
+            failed = row["failed_chunk_count"]
+            if failed > 0:
+                ch_status = "Failed"
+            elif pending > 0:
+                ch_status = "Embedding"
+            elif embedded == total and total > 0:
+                ch_status = "Ready"
+            else:
+                ch_status = "Building"
+            chapters.append({
+                "chapter_id": ch_id,
+                "status": ch_status,
+                "chunk_count": total,
+                "embedded_chunk_count": embedded,
+                "corpus_version_id": version_id,
+            })
+        return chapters
+
+    async def delete_chapter(
+        self, *, scope: dict[str, str], chapter_id: str, actor_id: str, request_id: str
+    ) -> dict[str, Any]:
+        async with self.conn.transaction():
+            active_ver = await self.repo.get_active_corpus_version(
+                scope["board_id"], scope["class_id"], scope["subject_id"]
+            )
+            if not active_ver:
+                raise LocalAdminError("ACTIVE_CORPUS_NOT_FOUND")
+
+            res = await self.repo.delete_chapter_from_active(
+                active_version_id=str(active_ver["id"]),
+                board_id=scope["board_id"],
+                class_id=scope["class_id"],
+                subject_id=scope["subject_id"],
+                chapter_id=chapter_id,
+            )
+            await self.audit.create_audit_log(
+                actor_id,
+                "corpus_chapter_deleted",
+                "rag_chapter",
+                f"{scope['subject_id']}:{chapter_id}",
+                after_value={
+                    "request_id": request_id,
+                    "scope": scope,
+                    "chapter_id": chapter_id,
+                    "res": res,
+                },
+            )
+
+        await get_active_corpus_version_cache().invalidate(
+            scope["board_id"], scope["class_id"], scope["subject_id"]
+        )
+        return res
+
     async def overview(self, scope: dict[str, str]) -> dict[str, Any]:
         rows = await self.conn.fetch(
             """SELECT cv.id::text AS id, cv.version_no, cv.status, cv.source_corpus_version_id::text AS source_corpus_version_id,
@@ -638,11 +729,11 @@ class LocalAdminService:
             scope["class_id"],
             scope["subject_id"],
         )
+        chapters = await self.list_chapters(scope)
         return {
             "scope": scope,
+            "chapters": chapters,
             "versions": [dict(row) for row in rows],
-            # Error text can contain provider/internal details.  The browser sees
-            # stable error codes only; local operators can correlate via job id.
             "jobs": [dict(row) for row in jobs],
         }
 
