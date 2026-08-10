@@ -317,3 +317,95 @@ async def test_successful_promotion_deletes_old_and_moves_new_chunks():
         and "rag_corpus_versions" in q[1]
     ]
     assert len(delete_temp_queries) > 0, "Must delete temp building corpus version after promotion"
+
+
+@pytest.mark.asyncio
+async def test_visual_review_status_from_chunk_data():
+    """Verify replace_chapter_chunks creates visuals with review_status and display_policy
+    from the visual dict (trusted admin pipeline) instead of hardcoded 'pending'."""
+    visual_inserts = []
+
+    class MockConn:
+        async def fetchrow(self, query, *args):
+            if "FOR UPDATE" in query:
+                return {"status": "building"}
+            if "INSERT INTO rag_chunks" in query:
+                return {
+                    "id": "chunk-1",
+                    "document_version_id": "doc-1",
+                    "corpus_version_id": "cv-1",
+                    "chunk_index": 0,
+                    "content": "test",
+                    "chapter_id": "ch01",
+                    "topic_no": "1.1",
+                    "topic_title": "Test",
+                    "content_type": "explanation",
+                    "content_hash": "abc",
+                }
+            if "expected_chunk_count" in query or "embedded_chunk_count" in query:
+                return {
+                    "expected_chunk_count": 1,
+                    "embedded_chunk_count": 0,
+                    "expected_question_count": 0,
+                    "embedded_question_count": 0,
+                }
+            return None
+
+        async def fetch(self, query, *args):
+            return []
+
+        async def execute(self, query, *args):
+            if "INSERT INTO rag_visuals" in query:
+                visual_inserts.append(args)
+            return "INSERT 1"
+
+    repo = RagRepository(MockConn())  # type: ignore
+    await repo.replace_chapter_chunks(
+        corpus_version_id="cv-1",
+        document_version_id="doc-1",
+        chunks=[{
+            "chunk_order": 0,
+            "chunk_text": "Cells are basic units.",
+            "chapter_id": "ch01",
+            "topic_no": "1.1",
+            "topic_title": "Cells",
+            "content_type": "explanation",
+            "content_hash": "abc123",
+            "metadata": {},
+            "expected_questions": [],
+            "visuals": [
+                {
+                    "visual_id": "v1",
+                    "visual_type": "diagram",
+                    "storage_key": "drive-key-v1",
+                    "title": "Cell Diagram",
+                    "description": "Eukaryotic cell",
+                    "review_status": "approved",
+                    "display_policy": "always_show",
+                },
+                {
+                    "visual_id": "v2",
+                    "visual_type": "figure",
+                    "storage_key": "drive-key-v2",
+                    "title": "Mitosis",
+                    "description": "Cell division",
+                    # No review_status/display_policy — should default to 'approved'/'llm_decide'
+                },
+            ],
+        }],
+    )
+
+    assert len(visual_inserts) == 2, "Expected 2 visual inserts"
+
+    # Visual 1: explicitly approved with always_show
+    v1_args = visual_inserts[0]
+    # Args order: chunk_id, visual_id, visual_type, storage_key, title, description, display_policy, review_status, visual_text_hash
+    assert v1_args[1] == "v1"
+    assert v1_args[6] == "always_show", "display_policy should be 'always_show' from visual dict"
+    assert v1_args[7] == "approved", "review_status should be 'approved' from visual dict"
+
+    # Visual 2: defaults to approved/llm_decide
+    v2_args = visual_inserts[1]
+    assert v2_args[1] == "v2"
+    assert v2_args[6] == "llm_decide", "display_policy should default to 'llm_decide'"
+    assert v2_args[7] == "approved", "review_status should default to 'approved'"

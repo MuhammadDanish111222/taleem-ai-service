@@ -449,12 +449,15 @@ class RagRepository:
                         ).hexdigest(),
                     )
 
-            # JSONL visual keys are persisted only in the service database.  New
-            # imports are intentionally non-displayable until reviewed locally.
+            # JSONL visual keys are persisted only in the service database.
+            # Trusted Local Admin paired-import pipeline provides review_status
+            # and display_policy; visuals from this pipeline are pre-approved.
             for visual in chunk.get("visuals") or []:
                 title = visual["title"].strip()
                 description = visual["description"].strip()
                 visual_text = " ".join(f"{title} {description}".split()).lower()
+                review_status = visual.get("review_status", "approved")
+                display_policy = visual.get("display_policy", "llm_decide")
                 await self.conn.execute(
                     """
                     INSERT INTO rag_visuals (
@@ -462,7 +465,7 @@ class RagRepository:
                         storage_provider, storage_key, display_policy, review_status,
                         visual_text_hash
                     ) VALUES ($1::uuid, $2, $3, $4, $5, $6, 'google_drive', $4,
-                              'llm_decide', 'pending', $7);
+                              $7, $8, $9);
                     """,
                     chunk_id,
                     visual["visual_id"],
@@ -470,6 +473,8 @@ class RagRepository:
                     visual["storage_key"],
                     title,
                     description,
+                    display_policy,
+                    review_status,
                     hashlib.sha256(visual_text.encode("utf-8")).hexdigest(),
                 )
 
@@ -1339,7 +1344,8 @@ class RagRepository:
         """Trusted internal query returning active chapter visuals and their real Drive storage keys."""
         rows = await self.conn.fetch(
             """
-            SELECT v.visual_id, v.title, v.description, v.storage_key, v.review_status
+            SELECT v.visual_id, v.visual_type, v.title, v.description,
+                   v.storage_key, v.review_status, v.display_policy
             FROM rag_visuals v
             JOIN rag_chunks c ON c.id = v.chunk_id
             JOIN rag_corpus_versions cv ON cv.id = c.corpus_version_id
