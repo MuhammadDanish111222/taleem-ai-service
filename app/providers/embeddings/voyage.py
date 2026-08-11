@@ -119,7 +119,10 @@ class VoyageEmbeddingProvider:
         settings = get_settings()
         if input_type == "document":
             key = (
-                settings.VOYAGE_ADMIN_API_KEY or os.getenv("VOYAGE_ADMIN_API_KEY", "")
+                settings.VOYAGE_ADMIN_API_KEY
+                or os.getenv("VOYAGE_ADMIN_API_KEY", "")
+                or settings.VOYAGE_API_KEY
+                or os.getenv("VOYAGE_API_KEY", "")
             ).strip()
             if not key:
                 raise RuntimeError(
@@ -127,7 +130,12 @@ class VoyageEmbeddingProvider:
                 )
             return key
         if input_type == "query":
-            key = (settings.VOYAGE_API_KEY or os.getenv("VOYAGE_API_KEY", "")).strip()
+            key = (
+                settings.VOYAGE_API_KEY
+                or os.getenv("VOYAGE_API_KEY", "")
+                or settings.VOYAGE_ADMIN_API_KEY
+                or os.getenv("VOYAGE_ADMIN_API_KEY", "")
+            ).strip()
             if not key:
                 raise RuntimeError(
                     "Voyage API key is not configured for query embedding."

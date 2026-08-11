@@ -159,7 +159,7 @@ class RetrievalService:
     ) -> EvidenceResult:
         """Local QA only: named building/qa-ready snapshot; never changes active resolution."""
         version = await self._repo.get_corpus_version(corpus_version_id)
-        if not version or version["status"] not in {"building", "qa_ready"}:
+        if not version or version["status"] not in {"building", "qa_ready", "active"}:
             raise RetrievalScopeError("QA_CORPUS_VERSION_NOT_ELIGIBLE")
         scoped = await self._repo.conn.fetchval(
             """SELECT EXISTS(SELECT 1 FROM rag_corpus_versions cv JOIN rag_corpora c ON c.id=cv.corpus_id
