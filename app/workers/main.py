@@ -13,6 +13,7 @@ import uuid
 from typing import Any, Callable, Dict, Optional
 
 import asyncpg
+from pgvector.asyncpg import register_vector
 
 from app.core.config import get_settings
 from app.core.worker_modes import owned_job_types, resolve_worker_mode
@@ -92,7 +93,12 @@ class Worker:
             f"Worker '{self.worker_id}' starting with supported job types: {self.supported_types}"
         )
 
-        pool = await asyncpg.create_pool(url, min_size=2, max_size=5)
+        async def init_connection(conn: asyncpg.Connection):
+            await register_vector(conn)
+
+        pool = await asyncpg.create_pool(
+            url, min_size=2, max_size=5, statement_cache_size=0, init=init_connection
+        )
         self.running = True
 
         # Setup signal handling for graceful shutdown
