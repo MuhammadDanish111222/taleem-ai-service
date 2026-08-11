@@ -102,7 +102,9 @@ async def handle_jsonl_ingest(
             revision=settings.EMBEDDING_MODEL_REVISION,
             dimensions=settings.EMBEDDING_DIM,
         )
-        active_ver = await repo.get_active_corpus_version(board_id, class_id, subject_id)
+        active_ver = await repo.get_active_corpus_version(
+            board_id, class_id, subject_id
+        )
         if active_ver:
             corpus = await repo.get_or_create_corpus(board_id, class_id, subject_id)
             corpus_ver = await repo.create_building_corpus_version(

@@ -337,5 +337,6 @@ async def test_validator_to_repository_flow_paired_vs_generic():
     generic_insert = visual_inserts[0]
     assert generic_insert[1] == "generic-v2"
     assert generic_insert[6] == "llm_decide"
-    assert generic_insert[7] == "pending", "Generic import must default to pending (not silently approved)"
-
+    assert generic_insert[7] == "pending", (
+        "Generic import must default to pending (not silently approved)"
+    )

@@ -79,4 +79,3 @@ async def handle_corpus_completeness(
     return await confirm_corpus_completeness(
         corpus_version_id, conn, auto_promote=auto_promote, target_chapter_id=chapter_id
     )
-

@@ -33,6 +33,7 @@ async def test_voyage_provider_enforces_admin_key_for_documents(monkeypatch):
     monkeypatch.setenv("VOYAGE_ADMIN_API_KEY", "admin_secret_key")
     monkeypatch.setenv("VOYAGE_API_KEY", "")
     from app.core.config import get_settings
+
     monkeypatch.setattr(get_settings(), "VOYAGE_ADMIN_API_KEY", "admin_secret_key")
     monkeypatch.setattr(get_settings(), "VOYAGE_API_KEY", "")
 
@@ -68,6 +69,7 @@ async def test_voyage_provider_enforces_query_key_for_queries(monkeypatch):
     monkeypatch.setenv("VOYAGE_ADMIN_API_KEY", "")
     monkeypatch.setenv("VOYAGE_API_KEY", "query_secret_key")
     from app.core.config import get_settings
+
     monkeypatch.setattr(get_settings(), "VOYAGE_ADMIN_API_KEY", "")
     monkeypatch.setattr(get_settings(), "VOYAGE_API_KEY", "query_secret_key")
 
@@ -101,6 +103,7 @@ async def test_voyage_admin_never_falls_back_to_railway_key(monkeypatch):
     monkeypatch.setenv("VOYAGE_ADMIN_API_KEY", "")
     monkeypatch.setenv("VOYAGE_API_KEY", "query_key_only")
     from app.core.config import get_settings
+
     monkeypatch.setattr(get_settings(), "VOYAGE_ADMIN_API_KEY", "")
     monkeypatch.setattr(get_settings(), "VOYAGE_API_KEY", "query_key_only")
 
@@ -114,13 +117,13 @@ async def test_voyage_railway_never_falls_back_to_admin_key(monkeypatch):
     monkeypatch.setenv("VOYAGE_ADMIN_API_KEY", "admin_key_only")
     monkeypatch.setenv("VOYAGE_API_KEY", "")
     from app.core.config import get_settings
+
     monkeypatch.setattr(get_settings(), "VOYAGE_ADMIN_API_KEY", "admin_key_only")
     monkeypatch.setattr(get_settings(), "VOYAGE_API_KEY", "")
 
     provider = VoyageEmbeddingProvider(input_type="query")
     with pytest.raises(RuntimeError, match="Voyage API key is not configured"):
         await provider.embed_queries(["Student live question"])
-
 
 
 @pytest.mark.asyncio

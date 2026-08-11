@@ -17,6 +17,7 @@ class MockTx:
 @pytest.mark.asyncio
 async def test_hard_verification_embedding_config_mismatch():
     """Verify promotion aborts if embedding configurations between temp and active version mismatch."""
+
     class MockConn:
         def transaction(self):
             return MockTx()
@@ -53,7 +54,9 @@ async def test_hard_verification_embedding_config_mismatch():
             return []
 
     repo = RagRepository(MockConn())  # type: ignore
-    with pytest.raises(ValueError, match="EMBEDDING_CONFIGURATION_MISMATCH_CANNOT_PROMOTE"):
+    with pytest.raises(
+        ValueError, match="EMBEDDING_CONFIGURATION_MISMATCH_CANNOT_PROMOTE"
+    ):
         await repo.promote_chapter_from_temp_to_active(
             temp_version_id="temp-1",
             active_version_id="active-1",
@@ -67,6 +70,7 @@ async def test_hard_verification_embedding_config_mismatch():
 @pytest.mark.asyncio
 async def test_multi_chapter_temp_corpus_rejected():
     """Verify promotion aborts if temp building corpus contains multiple chapters."""
+
     class MockConn:
         def transaction(self):
             return MockTx()
@@ -101,7 +105,9 @@ async def test_multi_chapter_temp_corpus_rejected():
             return []
 
     repo = RagRepository(MockConn())  # type: ignore
-    with pytest.raises(ValueError, match="TEMP_CORPUS_MUST_CONTAIN_EXACTLY_ONE_CHAPTER"):
+    with pytest.raises(
+        ValueError, match="TEMP_CORPUS_MUST_CONTAIN_EXACTLY_ONE_CHAPTER"
+    ):
         await repo.promote_chapter_from_temp_to_active(
             temp_version_id="temp-multi",
             active_version_id="active-1",
@@ -151,7 +157,9 @@ async def test_qa_cleanup_distinction():
         "DELETE FROM question_bank_revision_citations WHERE chunk_id = ANY" in q[0]
         for q in queries
     )
-    assert deleted_chunk_citations, "Must remove citation links for manual Q&A referencing deleted chunks"
+    assert deleted_chunk_citations, (
+        "Must remove citation links for manual Q&A referencing deleted chunks"
+    )
 
     deleted_visual_links = any(
         "DELETE FROM question_bank_revision_visuals WHERE visual_id = ANY" in q[0]
@@ -207,7 +215,8 @@ async def test_fresh_temp_corpus_for_active_subject():
 
     # Verify it did NOT attempt to look up existing building/qa_ready versions
     select_building_or_qa = [
-        q for q in queries
+        q
+        for q in queries
         if "status = 'building'" in q[1] or "status = 'qa_ready'" in q[1]
     ]
     assert len(select_building_or_qa) == 0, (
@@ -263,7 +272,11 @@ async def test_successful_promotion_deletes_old_and_moves_new_chunks():
                 return [{"chapter_id": "ch01"}]
             if "rag_document_versions" in query and "temp-v" in str(args):
                 return [{"resource_id": "jsonl:chapter:ch01"}]
-            if "rag_chunks" in query and "id::text" in query and "active-v" in str(args):
+            if (
+                "rag_chunks" in query
+                and "id::text" in query
+                and "active-v" in str(args)
+            ):
                 return [{"id": "old-chunk-1"}, {"id": "old-chunk-2"}]
             if "rag_visuals" in query and "id::text" in query:
                 return [{"id": "old-vis-1"}]
@@ -291,17 +304,21 @@ async def test_successful_promotion_deletes_old_and_moves_new_chunks():
 
     # Verify old chapter chunks were deleted
     delete_chunk_queries = [
-        q for q in queries
+        q
+        for q in queries
         if q[0] == "execute"
         and "DELETE" in q[1]
         and "rag_chunks" in q[1]
         and "active-v" in str(q[2])
     ]
-    assert len(delete_chunk_queries) > 0, "Must delete old chapter chunks from active version"
+    assert len(delete_chunk_queries) > 0, (
+        "Must delete old chapter chunks from active version"
+    )
 
     # Verify new chunks were moved from temp to active
     update_chunk_queries = [
-        q for q in queries
+        q
+        for q in queries
         if q[0] == "execute"
         and "UPDATE" in q[1]
         and "rag_chunks" in q[1]
@@ -311,12 +328,13 @@ async def test_successful_promotion_deletes_old_and_moves_new_chunks():
 
     # Verify temp version was deleted
     delete_temp_queries = [
-        q for q in queries
-        if q[0] == "execute"
-        and "DELETE" in q[1]
-        and "rag_corpus_versions" in q[1]
+        q
+        for q in queries
+        if q[0] == "execute" and "DELETE" in q[1] and "rag_corpus_versions" in q[1]
     ]
-    assert len(delete_temp_queries) > 0, "Must delete temp building corpus version after promotion"
+    assert len(delete_temp_queries) > 0, (
+        "Must delete temp building corpus version after promotion"
+    )
 
 
 @pytest.mark.asyncio
@@ -363,36 +381,38 @@ async def test_visual_review_status_from_chunk_data():
     await repo.replace_chapter_chunks(
         corpus_version_id="cv-1",
         document_version_id="doc-1",
-        chunks=[{
-            "chunk_order": 0,
-            "chunk_text": "Cells are basic units.",
-            "chapter_id": "ch01",
-            "topic_no": "1.1",
-            "topic_title": "Cells",
-            "content_type": "explanation",
-            "content_hash": "abc123",
-            "metadata": {},
-            "expected_questions": [],
-            "visuals": [
-                {
-                    "visual_id": "v1",
-                    "visual_type": "diagram",
-                    "storage_key": "drive-key-v1",
-                    "title": "Cell Diagram",
-                    "description": "Eukaryotic cell",
-                    "review_status": "approved",
-                    "display_policy": "always",
-                },
-                {
-                    "visual_id": "v2",
-                    "visual_type": "figure",
-                    "storage_key": "drive-key-v2",
-                    "title": "Mitosis",
-                    "description": "Cell division",
-                    # No review_status/display_policy — should default to 'pending'/'llm_decide'
-                },
-            ],
-        }],
+        chunks=[
+            {
+                "chunk_order": 0,
+                "chunk_text": "Cells are basic units.",
+                "chapter_id": "ch01",
+                "topic_no": "1.1",
+                "topic_title": "Cells",
+                "content_type": "explanation",
+                "content_hash": "abc123",
+                "metadata": {},
+                "expected_questions": [],
+                "visuals": [
+                    {
+                        "visual_id": "v1",
+                        "visual_type": "diagram",
+                        "storage_key": "drive-key-v1",
+                        "title": "Cell Diagram",
+                        "description": "Eukaryotic cell",
+                        "review_status": "approved",
+                        "display_policy": "always",
+                    },
+                    {
+                        "visual_id": "v2",
+                        "visual_type": "figure",
+                        "storage_key": "drive-key-v2",
+                        "title": "Mitosis",
+                        "description": "Cell division",
+                        # No review_status/display_policy — should default to 'pending'/'llm_decide'
+                    },
+                ],
+            }
+        ],
     )
 
     assert len(visual_inserts) == 2, "Expected 2 visual inserts"
@@ -402,7 +422,9 @@ async def test_visual_review_status_from_chunk_data():
     # Args order: chunk_id, visual_id, visual_type, storage_key, title, description, display_policy, review_status, visual_text_hash
     assert v1_args[1] == "v1"
     assert v1_args[6] == "always", "display_policy should be 'always' from visual dict"
-    assert v1_args[7] == "approved", "review_status should be 'approved' from visual dict"
+    assert v1_args[7] == "approved", (
+        "review_status should be 'approved' from visual dict"
+    )
 
     # Visual 2: defaults to pending/llm_decide
     v2_args = visual_inserts[1]

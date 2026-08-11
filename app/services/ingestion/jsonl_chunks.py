@@ -636,8 +636,18 @@ async def validate_and_parse_jsonl(
                         "description": visual["description"].strip(),
                         "storage_key": visual["storage_key"].strip(),
                     },
-                    **({"review_status": visual["review_status"].strip().lower()} if "review_status" in visual and visual["review_status"] is not None else {}),
-                    **({"display_policy": visual["display_policy"].strip().lower()} if "display_policy" in visual and visual["display_policy"] is not None else {}),
+                    **(
+                        {"review_status": visual["review_status"].strip().lower()}
+                        if "review_status" in visual
+                        and visual["review_status"] is not None
+                        else {}
+                    ),
+                    **(
+                        {"display_policy": visual["display_policy"].strip().lower()}
+                        if "display_policy" in visual
+                        and visual["display_policy"] is not None
+                        else {}
+                    ),
                 }
                 for visual in row.get("visuals", [])
             ],

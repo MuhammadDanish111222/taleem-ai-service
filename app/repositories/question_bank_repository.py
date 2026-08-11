@@ -564,16 +564,20 @@ class QuestionBankRepository:
             q_id = row["question_id"]
 
             await self.conn.execute(
-                "DELETE FROM question_bank_revision_citations WHERE revision_id = $1::uuid", rev_id
+                "DELETE FROM question_bank_revision_citations WHERE revision_id = $1::uuid",
+                rev_id,
             )
             await self.conn.execute(
-                "DELETE FROM question_bank_revision_visuals WHERE revision_id = $1::uuid", rev_id
+                "DELETE FROM question_bank_revision_visuals WHERE revision_id = $1::uuid",
+                rev_id,
             )
             await self.conn.execute(
-                "DELETE FROM question_bank_mcq_options WHERE revision_id = $1::uuid", rev_id
+                "DELETE FROM question_bank_mcq_options WHERE revision_id = $1::uuid",
+                rev_id,
             )
             await self.conn.execute(
-                "DELETE FROM question_bank_variations WHERE revision_id = $1::uuid", rev_id
+                "DELETE FROM question_bank_variations WHERE revision_id = $1::uuid",
+                rev_id,
             )
             await self.conn.execute(
                 "DELETE FROM question_bank_revisions WHERE id = $1::uuid", rev_id
@@ -581,7 +585,8 @@ class QuestionBankRepository:
             deleted_revisions += 1
 
             remaining = await self.conn.fetchval(
-                "SELECT COUNT(*) FROM question_bank_revisions WHERE question_id = $1::uuid", q_id
+                "SELECT COUNT(*) FROM question_bank_revisions WHERE question_id = $1::uuid",
+                q_id,
             )
             if remaining == 0:
                 await self.conn.execute(
@@ -595,4 +600,3 @@ class QuestionBankRepository:
             "deleted_llm_revisions": deleted_revisions,
             "deleted_llm_questions": deleted_questions,
         }
-

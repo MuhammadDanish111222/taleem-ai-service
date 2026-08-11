@@ -523,7 +523,11 @@ class RagRepository:
                 payload, sort_keys=True, default=str, separators=(",", ":")
             ).encode("utf-8")
         ).hexdigest()
-        condition = "status IN ('building', 'active')" if allow_active else "status = 'building'"
+        condition = (
+            "status IN ('building', 'active')"
+            if allow_active
+            else "status = 'building'"
+        )
         await self.conn.execute(
             f"""
             UPDATE rag_corpus_versions
@@ -1215,10 +1219,12 @@ class RagRepository:
         """
         async with self.conn.transaction():
             temp_ver = await self.conn.fetchrow(
-                "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", temp_version_id
+                "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;",
+                temp_version_id,
             )
             active_ver = await self.conn.fetchrow(
-                "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", active_version_id
+                "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;",
+                active_version_id,
             )
             if not temp_ver or not active_ver:
                 raise ValueError("CORPUS_VERSION_NOT_FOUND")
@@ -1241,7 +1247,9 @@ class RagRepository:
                 temp_version_id,
             )
             expected_resource = f"jsonl:chapter:{chapter_id}"
-            if not temp_docs or any(d["resource_id"] != expected_resource for d in temp_docs):
+            if not temp_docs or any(
+                d["resource_id"] != expected_resource for d in temp_docs
+            ):
                 raise ValueError("TEMP_DOCUMENT_VERSION_MISMATCH")
 
             temp_cfg = (
@@ -1318,7 +1326,9 @@ class RagRepository:
             )
 
             await self.refresh_embedding_counts(active_version_id)
-            await self.refresh_embedding_input_fingerprint(active_version_id, allow_active=True)
+            await self.refresh_embedding_input_fingerprint(
+                active_version_id, allow_active=True
+            )
 
             await self.conn.execute(
                 """UPDATE rag_corpus_qa_approvals
@@ -1361,7 +1371,6 @@ class RagRepository:
         )
         return [dict(r) for r in rows]
 
-
     async def delete_chapter_from_active(
         self,
         *,
@@ -1373,7 +1382,8 @@ class RagRepository:
     ) -> Dict[str, Any]:
         """Atomically deletes a chapter's chunks, expected questions, document versions, and LLM Q&A from active corpus."""
         active_ver = await self.conn.fetchrow(
-            "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;", active_version_id
+            "SELECT * FROM rag_corpus_versions WHERE id = $1::uuid FOR UPDATE;",
+            active_version_id,
         )
         if not active_ver or active_ver["status"] != "active":
             raise ValueError("ACTIVE_CORPUS_VERSION_NOT_FOUND")
@@ -1420,7 +1430,9 @@ class RagRepository:
             )
 
         await self.refresh_embedding_counts(active_version_id)
-        await self.refresh_embedding_input_fingerprint(active_version_id, allow_active=True)
+        await self.refresh_embedding_input_fingerprint(
+            active_version_id, allow_active=True
+        )
 
         await self.conn.execute(
             """UPDATE rag_corpus_qa_approvals
@@ -1436,4 +1448,3 @@ class RagRepository:
             "deleted_chunks": len(old_chunk_ids),
             "qa_summary": qa_summary,
         }
-

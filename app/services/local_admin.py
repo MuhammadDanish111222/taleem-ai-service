@@ -662,13 +662,15 @@ class LocalAdminService:
                 ch_status = "Ready"
             else:
                 ch_status = "Building"
-            chapters.append({
-                "chapter_id": ch_id,
-                "status": ch_status,
-                "chunk_count": total,
-                "embedded_chunk_count": embedded,
-                "corpus_version_id": version_id,
-            })
+            chapters.append(
+                {
+                    "chapter_id": ch_id,
+                    "status": ch_status,
+                    "chunk_count": total,
+                    "embedded_chunk_count": embedded,
+                    "corpus_version_id": version_id,
+                }
+            )
         return chapters
 
     async def get_chapter_visuals(
