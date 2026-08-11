@@ -29,6 +29,13 @@ class AskRepository:
         )
         return dict(row) if row else None
 
+    async def answer_by_request_id(self, request_id: str) -> dict[str, Any] | None:
+        row = await self.conn.fetchrow(
+            """SELECT * FROM ai_answers WHERE request_id = $1::uuid""",
+            request_id,
+        )
+        return dict(row) if row else None
+
     async def create_pending(
         self,
         *,
