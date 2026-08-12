@@ -1,9 +1,12 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.api.v1 import ask, ask_admin, health, internal
 from app.db.pool import close_db_pool, init_db_pool
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -12,7 +15,7 @@ async def lifespan(app: FastAPI):
     try:
         await init_db_pool()
     except Exception:
-        pass
+        logger.exception("Database pool initialization failed; service is not ready.")
     yield
     # Shutdown: close DB pool
     await close_db_pool()
