@@ -9,6 +9,7 @@ from typing import Any, Iterable
 import asyncpg
 
 from app.schemas.ask import AnswerMode, AnswerStyle
+from app.services.answers.approved_matching import select_lexical_match
 
 
 @dataclass(frozen=True)
@@ -183,8 +184,63 @@ class QuestionBankRepository:
             json.dumps(query_embedding),
             evaluated_threshold,
         )
-        selected = self._unambiguous(list(rows), chapter_id)
+        row_list = list(rows)
+        selected = self._unambiguous(row_list, chapter_id)
+        if selected is not None:
+            best_by_revision: dict[str, float] = {}
+            for row in row_list:
+                revision_id = str(row["id"])
+                distance = float(row["distance"])
+                best_by_revision[revision_id] = min(
+                    distance, best_by_revision.get(revision_id, distance)
+                )
+            distances = sorted(best_by_revision.values())
+            if len(distances) > 1 and distances[1] - distances[0] < 0.03:
+                selected = None
         return await self._hydrate(selected) if selected is not None else None
+
+    async def find_lexical(
+        self,
+        *,
+        board_id: str,
+        class_id: str,
+        subject_id: str,
+        chapter_id: str | None,
+        answer_mode: AnswerMode,
+        normalized_question: str,
+    ) -> ApprovedBankAnswer | None:
+        """Conservatively match approved questions and active variations only."""
+
+        rows = await self.conn.fetch(
+            """SELECT r.id::text AS revision_id,r.chapter_id,r.question_text AS match_text
+               FROM question_bank_revisions r
+               WHERE r.board_id=$1 AND r.class_id=$2 AND r.subject_id=$3
+                 AND ($4::text IS NULL OR r.chapter_id=$4)
+                 AND r.answer_mode=$5 AND r.review_status='approved'
+                 AND r.superseded_at IS NULL
+               UNION ALL
+               SELECT r.id::text AS revision_id,r.chapter_id,v.variation_text AS match_text
+               FROM question_bank_variations v
+               JOIN question_bank_revisions r ON r.id=v.revision_id
+               WHERE r.board_id=$1 AND r.class_id=$2 AND r.subject_id=$3
+                 AND ($4::text IS NULL OR r.chapter_id=$4)
+                 AND r.answer_mode=$5 AND v.active
+                 AND r.review_status='approved' AND r.superseded_at IS NULL
+               LIMIT 200""",
+            board_id,
+            class_id,
+            subject_id,
+            chapter_id,
+            answer_mode.value,
+        )
+        revision_id = select_lexical_match(
+            normalized_question,
+            (
+                (row["revision_id"], row["match_text"], row["chapter_id"])
+                for row in rows
+            ),
+        )
+        return await self.get_revision(revision_id) if revision_id is not None else None
 
     async def create_approved_revision(
         self,

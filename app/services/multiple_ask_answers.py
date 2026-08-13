@@ -42,7 +42,7 @@ from app.services.jobs.queue import JobQueueService
 from app.services.multiple_ask import MultipleAskError
 from app.services.prompts.models import AnswerMode as PromptAnswerMode
 from app.services.prompts.models import PromptKey, PromptScope
-from app.services.retrieval.evidence import RetrievalScope
+from app.services.retrieval.evidence import EvidenceStrength, RetrievalScope
 from app.services.usage.service import UsageService
 
 logger = logging.getLogger(__name__)
@@ -165,16 +165,9 @@ class MultipleAskAnswerService:
                 async with self._conn.transaction():
                     await self._repo.mark_item_answering(str(item["id"]))
                 mode = AnswerMode(item["answer_mode"])
-                approved = await self._ask._bank.find_exact(
-                    board_id=job["board_id"],
-                    class_id=job["class_id"],
-                    subject_id=job["subject_id"],
-                    chapter_id=job["chapter_id"],
-                    answer_mode=mode,
-                    normalized_question=item["normalized_question"],
-                )
-                if approved is None:
-                    approved = await self._ask._bank.find_exact_variation(
+                approved = None
+                if mode in {AnswerMode.SHORT, AnswerMode.LONG}:
+                    approved, route = await self._ask.find_approved_without_embedding(
                         board_id=job["board_id"],
                         class_id=job["class_id"],
                         subject_id=job["subject_id"],
@@ -183,6 +176,9 @@ class MultipleAskAnswerService:
                         normalized_question=item["normalized_question"],
                     )
                 if approved is not None:
+                    logger.info(
+                        "multiple_ask_answer_route=%s item_id=%s", route, item["id"]
+                    )
                     answer = await self._asks.complete(
                         ai_request_id=str(request["id"]),
                         answer_source=AnswerSource.APPROVED_BANK.value,
@@ -248,7 +244,8 @@ class MultipleAskAnswerService:
                 )
                 approved = None
                 if (
-                    vector
+                    mode in {AnswerMode.SHORT, AnswerMode.LONG}
+                    and vector
                     and policy["semantic_reuse_enabled"]
                     and policy["semantic_distance_threshold"] is not None
                 ):
@@ -265,6 +262,10 @@ class MultipleAskAnswerService:
                         answer_mode=mode,
                     )
                 if approved is not None:
+                    logger.info(
+                        "multiple_ask_answer_route=approved_semantic item_id=%s",
+                        item["id"],
+                    )
                     answer = await self._asks.complete(
                         ai_request_id=str(request["id"]),
                         answer_source=AnswerSource.APPROVED_BANK.value,
@@ -387,7 +388,12 @@ class MultipleAskAnswerService:
         source = AnswerSource.SYLLABUS_GROUNDED
         citations: dict[str, CitationDto] = {}
         visuals: dict[str, VisualDto] = {}
-        if evidence.results:
+        evidence_strength = getattr(
+            evidence,
+            "strength",
+            EvidenceStrength.STRONG if evidence.results else EvidenceStrength.NONE,
+        )
+        if evidence_strength is EvidenceStrength.STRONG:
             results = evidence.results[:1]
             if active:
                 request_context = SimpleNamespace(
@@ -435,11 +441,10 @@ class MultipleAskAnswerService:
                 "question": item["source_text"],
                 "answer_mode": mode.value,
                 "answer_style": "exam_style",
-                "allow_general": bool(policy["allow_general"]),
                 "evidence": [asdict(value) for value in context],
                 "allowed_visuals": [visual.model_dump() for visual in visuals.values()],
             }
-        elif policy["allow_general"]:
+        else:
             source = AnswerSource.GENERAL_KNOWLEDGE
             citations, visuals, prompt_key = {}, {}, PromptKey.ASK_GENERAL
             payload = {
@@ -447,8 +452,14 @@ class MultipleAskAnswerService:
                 "answer_mode": mode.value,
                 "answer_style": "exam_style",
             }
-        else:
-            raise MultipleAskAnswerError("GENERAL_AI_DISABLED", status_code=409)
+        logger.info(
+            "multiple_ask_answer_route=%s item_id=%s evidence=%s",
+            "rag_grounded"
+            if source is AnswerSource.SYLLABUS_GROUNDED
+            else "general_fallback",
+            item["id"],
+            evidence_strength,
+        )
 
         resolved = await self._ask._prompts.resolve_active(
             prompt_key=prompt_key,
@@ -475,10 +486,6 @@ class MultipleAskAnswerService:
             isinstance(value, str) for value in cited_ids
         ):
             raise AnswerValidationError("ANSWER_CITATIONS_INVALID")
-        if source is AnswerSource.SYLLABUS_GROUNDED and not cited_ids:
-            if not policy["allow_general"]:
-                raise MultipleAskAnswerError("GENERAL_AI_DISABLED", status_code=409)
-            source, citations, visuals = AnswerSource.GENERAL_KNOWLEDGE, {}, {}
         validated = validate_generated_answer(
             source=source,
             blocks=blocks,

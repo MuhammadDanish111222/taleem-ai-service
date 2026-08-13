@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -55,6 +56,7 @@ from app.services.prompts.models import (
 from app.services.prompts.service import PromptService
 from app.services.retrieval.evidence import (
     Citation,
+    EvidenceStrength,
     RetrievalScope,
     RetrievedEvidence,
     RetrievedVisual,
@@ -66,6 +68,7 @@ from app.services.usage.service import UsageLimitExceeded, UsageService
 _BLOCKS = TypeAdapter(list[AnswerBlock])
 _TOPIC_ANCHOR_WINDOW = 5
 _MAX_COMPLETE_TOPIC_CHUNKS = 12
+logger = logging.getLogger(__name__)
 
 
 def _normalize_provider_block_aliases(value: object) -> object:
@@ -249,7 +252,7 @@ class AskService:
                 raise AskServiceError("REQUEST_ALREADY_IN_PROGRESS", status_code=409)
             ai_request = created_request
 
-            approved = await self._bank.find_exact(
+            approved, route = await self.find_approved_without_embedding(
                 board_id=request.board_id,
                 class_id=request.class_id,
                 subject_id=request.subject_id,
@@ -257,15 +260,6 @@ class AskService:
                 answer_mode=AnswerMode(request.answer_mode),
                 normalized_question=normalized,
             )
-            if approved is None:
-                approved = await self._bank.find_exact_variation(
-                    board_id=request.board_id,
-                    class_id=request.class_id,
-                    subject_id=request.subject_id,
-                    chapter_id=request.chapter_id,
-                    answer_mode=AnswerMode(request.answer_mode),
-                    normalized_question=normalized,
-                )
             source_policy = await self._source_policy(
                 request.class_id, request.subject_id
             )
@@ -298,8 +292,11 @@ class AskService:
                         chapter_id=request.chapter_id,
                         answer_mode=AnswerMode(request.answer_mode),
                     )
+                    if approved is not None:
+                        route = "approved_semantic"
 
             if approved is not None:
+                logger.info("ask_answer_route=%s request_id=%s", route, request_id)
                 async with self._conn.transaction():
                     await self._persist_approved(ai_request, approved)
                     await self._usage.commit(self._conn, request_id, safe_uid)
@@ -314,7 +311,7 @@ class AskService:
                 request.board_id, request.class_id, request.subject_id
             )
 
-            if evidence.results:
+            if evidence.strength is EvidenceStrength.STRONG:
                 prompt_key = PromptKey.ASK_GROUNDED
                 generation_results = evidence.results[:1]
                 if active_version:
@@ -363,7 +360,6 @@ class AskService:
                         "question": request.question,
                         "answer_mode": request.answer_mode.value,
                         "answer_style": request.answer_style.value,
-                        "allow_general": bool(source_policy["allow_general"]),
                         "evidence": [asdict(item) for item in context],
                         "allowed_visuals": [
                             visual.model_dump() for visual in allowed_visuals.values()
@@ -373,24 +369,6 @@ class AskService:
                 )
                 source = AnswerSource.SYLLABUS_GROUNDED
             else:
-                if not source_policy["allow_general"]:
-                    error_code = (
-                        "NO_ACTIVE_CORPUS"
-                        if active_version is None
-                        else "GENERAL_AI_DISABLED"
-                    )
-                    async with self._conn.transaction():
-                        await self._asks.no_answer(
-                            str(ai_request["id"]),
-                            error_code=error_code,
-                            prompt_version=None,
-                        )
-                        await self._usage.commit(self._conn, request_id, safe_uid)
-                    return self._no_answer_response(
-                        request,
-                        reservation,
-                        error_code=error_code,
-                    )
                 prompt_key = PromptKey.ASK_GENERAL
                 allowed_citations = {}
                 allowed_visuals = {}
@@ -403,6 +381,15 @@ class AskService:
                     separators=(",", ":"),
                 )
                 source = AnswerSource.GENERAL_KNOWLEDGE
+
+            logger.info(
+                "ask_answer_route=%s request_id=%s evidence=%s",
+                "rag_grounded"
+                if source is AnswerSource.SYLLABUS_GROUNDED
+                else "general_fallback",
+                request_id,
+                evidence.strength,
+            )
 
             resolved = await self._prompts.resolve_active(
                 prompt_key=prompt_key,
@@ -448,24 +435,6 @@ class AskService:
                     reservation,
                     error_code="TEXTBOOK_EVIDENCE_INSUFFICIENT",
                 )
-
-            if source == AnswerSource.SYLLABUS_GROUNDED and not cited_ids:
-                if not source_policy["allow_general"]:
-                    async with self._conn.transaction():
-                        await self._asks.no_answer(
-                            str(ai_request["id"]),
-                            error_code="GENERAL_AI_DISABLED",
-                            prompt_version=prompt_version,
-                        )
-                        await self._usage.commit(self._conn, request_id, safe_uid)
-                    return self._no_answer_response(
-                        request,
-                        reservation,
-                        error_code="GENERAL_AI_DISABLED",
-                    )
-                source = AnswerSource.GENERAL_KNOWLEDGE
-                allowed_citations = {}
-                allowed_visuals = {}
 
             validated = validate_generated_answer(
                 source=source,
@@ -544,6 +513,39 @@ class AskService:
                     "PROMPT_CONFIGURATION_MISSING", status_code=503
                 ) from exc
             raise AskServiceError("ASK_INTERNAL_FAILURE", status_code=500) from None
+
+    async def find_approved_without_embedding(
+        self,
+        *,
+        board_id: str,
+        class_id: str,
+        subject_id: str,
+        chapter_id: str | None,
+        answer_mode: AnswerMode,
+        normalized_question: str,
+    ) -> tuple[ApprovedBankAnswer | None, str | None]:
+        """Run the deterministic, no-provider approved-bank prefix."""
+
+        if answer_mode not in {AnswerMode.SHORT, AnswerMode.LONG}:
+            return None, None
+        scope = {
+            "board_id": board_id,
+            "class_id": class_id,
+            "subject_id": subject_id,
+            "chapter_id": chapter_id,
+            "answer_mode": answer_mode,
+            "normalized_question": normalized_question,
+        }
+        approved = await self._bank.find_exact(**scope)
+        if approved is not None:
+            return approved, "approved_exact"
+        approved = await self._bank.find_exact_variation(**scope)
+        if approved is not None:
+            return approved, "approved_variation"
+        approved = await self._bank.find_lexical(**scope)
+        if approved is not None:
+            return approved, "approved_lexical"
+        return None, None
 
     async def _expand_answer_topics(
         self,

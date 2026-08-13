@@ -306,6 +306,7 @@ async def test_retryable_deepseek_error_re_raises_for_queue_backoff():
     service._answer_single_short_or_long = AsyncMock(side_effect=retryable_err)
     service._ask = SimpleNamespace(
         _source_policy=AsyncMock(return_value={"semantic_reuse_enabled": False}),
+        find_approved_without_embedding=AsyncMock(return_value=(None, None)),
         _bank=SimpleNamespace(
             find_exact=AsyncMock(return_value=None),
             find_exact_variation=AsyncMock(return_value=None),

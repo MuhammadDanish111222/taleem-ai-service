@@ -380,6 +380,53 @@ async def test_exact_variation_bypasses_retrieval_and_provider(conn):
 
 
 @pytest.mark.asyncio
+async def test_lexical_approved_match_bypasses_retrieval_and_provider(conn):
+    await create_approved(conn, "What is chemistry?", "chapter-1")
+    retrieval = FakeRetrieval(
+        EvidenceResult(EvidenceStrength.NONE, (), "NO_SCOPED_EVIDENCE")
+    )
+    provider = FakeProvider()
+    result = await AskService(
+        conn,
+        retrieval=retrieval,
+        provider=provider,
+        usage=FakeUsage(),
+        prompt_service=FakePrompts(),
+    ).ask(
+        request(question="Define chemistry."),
+        uid="student",
+        tier=AccountTier.ANONYMOUS,
+    )
+    assert result.answer_source == AnswerSource.APPROVED_BANK
+    assert retrieval.calls == provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_lexical_match_preserves_scope_and_answer_mode(conn):
+    await create_approved(conn, "What is chemistry?", "chapter-2")
+    retrieval = FakeRetrieval(
+        EvidenceResult(EvidenceStrength.NONE, (), "NO_SCOPED_EVIDENCE")
+    )
+    provider = FakeProvider(
+        {
+            "blocks": [{"type": "paragraph", "text": "General answer"}],
+            "cited_chunk_ids": [],
+        }
+    )
+    ask_request = request(question="Define chemistry.", chapter_id="chapter-1")
+    ask_request.answer_mode = AnswerMode.LONG
+    result = await AskService(
+        conn,
+        retrieval=retrieval,
+        provider=provider,
+        usage=FakeUsage(),
+        prompt_service=FakePrompts(),
+    ).ask(ask_request, uid="student", tier=AccountTier.ANONYMOUS)
+    assert result.answer_source == AnswerSource.GENERAL_KNOWLEDGE
+    assert retrieval.calls == provider.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_semantic_reuse_is_disabled_without_evaluated_policy(conn):
     retrieval = FakeRetrieval(
         EvidenceResult(EvidenceStrength.NONE, (), "NO_SCOPED_EVIDENCE")
@@ -423,6 +470,59 @@ async def test_semantic_repository_never_reuses_unapproved_rows(conn):
         answer_mode=AnswerMode.SHORT,
     )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_semantic_threshold_changes_approved_reuse(conn):
+    revision_id = await create_approved(conn, "What is force?", "chapter-1")
+    vector = [1.0] + [0.0] * 511
+    await conn.execute(
+        """UPDATE question_bank_revisions
+           SET embedding=$2::text::halfvec,embedding_status='embedded'
+           WHERE id=$1::uuid""",
+        revision_id,
+        str(vector),
+    )
+    await conn.execute(
+        """UPDATE ask_source_policies
+           SET semantic_reuse_enabled=TRUE,semantic_distance_threshold=0.18
+           WHERE class_id='class-9' AND subject_id='physics'"""
+    )
+    retrieval = FakeRetrieval(
+        EvidenceResult(EvidenceStrength.NONE, (), "NO_SCOPED_EVIDENCE")
+    )
+    provider = FakeProvider(
+        {
+            "blocks": [{"type": "paragraph", "text": "General answer"}],
+            "cited_chunk_ids": [],
+        }
+    )
+    service = AskService(
+        conn,
+        retrieval=retrieval,
+        provider=provider,
+        usage=FakeUsage(),
+        prompt_service=FakePrompts(),
+    )
+    result = await service.ask(
+        request(question="Describe a force interaction."),
+        uid="student",
+        tier=AccountTier.ANONYMOUS,
+    )
+    assert result.answer_source == AnswerSource.APPROVED_BANK
+    assert retrieval.calls == provider.calls == 0
+
+    await conn.execute(
+        """UPDATE ask_source_policies SET semantic_distance_threshold=0.0
+           WHERE class_id='class-9' AND subject_id='physics'"""
+    )
+    result = await service.ask(
+        request(question="Describe a force interaction."),
+        uid="student",
+        tier=AccountTier.ANONYMOUS,
+    )
+    assert result.answer_source == AnswerSource.GENERAL_KNOWLEDGE
+    assert retrieval.calls == provider.calls == 1
 
 
 @pytest.mark.asyncio
@@ -657,11 +757,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
 
 
 @pytest.mark.asyncio
-async def test_strong_but_irrelevant_evidence_becomes_labelled_general_answer(conn):
-    await conn.execute(
-        """UPDATE ask_source_policies SET allow_general=TRUE
-               WHERE class_id='class-9' AND subject_id='physics'"""
-    )
+async def test_strong_evidence_uses_grounded_prompt_and_provenance(conn):
     evidence = EvidenceResult(
         EvidenceStrength.STRONG,
         (
@@ -691,7 +787,7 @@ async def test_strong_but_irrelevant_evidence_becomes_labelled_general_answer(co
         provider=FakeProvider(
             {
                 "blocks": [{"type": "paragraph", "text": "Tokyo is the capital."}],
-                "cited_chunk_ids": [],
+                "cited_chunk_ids": ["chunk-1"],
             }
         ),
         usage=FakeUsage(),
@@ -702,10 +798,9 @@ async def test_strong_but_irrelevant_evidence_becomes_labelled_general_answer(co
         tier=AccountTier.ANONYMOUS,
     )
 
-    assert result.answer_source == AnswerSource.GENERAL_KNOWLEDGE
-    assert result.general_ai_label
-    assert result.citations == []
-    assert result.visuals == []
+    assert result.answer_source == AnswerSource.SYLLABUS_GROUNDED
+    assert result.general_ai_label is None
+    assert [citation.citation_id for citation in result.citations] == ["chunk-1"]
     assert prompts.keys == [PromptKey.ASK_GROUNDED]
 
 

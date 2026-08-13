@@ -48,12 +48,10 @@ visual_ref immediately after the section it supports. For short answers, remain 
 concise and include only directly relevant textbook points. When the \
 answer is supported by the evidence, cite at least one supporting allowed chunk \
 identifier. Every cited chunk and visual_ref must use an allowed identifier \
-exactly. When the evidence does not support the answer and allow_general is true, \
-answer from general knowledge with an empty cited_chunk_ids array, do not emit a \
-visual_ref, and do not claim textbook verification. When the evidence does not \
-support the answer and allow_general is false, return empty blocks and an empty \
-cited_chunk_ids array. Never attach an unrelated textbook citation merely to make \
-an answer appear grounded.
+exactly. Answer only from the supplied textbook evidence; never switch to general \
+knowledge. If the evidence cannot support the answer, return empty blocks and an \
+empty cited_chunk_ids array. Never attach an unrelated textbook citation merely \
+to make an answer appear grounded.
 """
 
 _GENERAL_SOURCE_RULES = """\

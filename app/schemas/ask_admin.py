@@ -102,6 +102,8 @@ class AskAdminRequest(StrictModel):
         "bank_set_variation_active",
         "bank_requeue_embedding",
         "bank_set_visuals",
+        "source_policy_get",
+        "source_policy_set_semantic_threshold",
     ]
     prompt_id: UUID | None = None
     prompt_key: Literal["ask_grounded", "ask_general"] | None = None
@@ -120,6 +122,7 @@ class AskAdminRequest(StrictModel):
     reason: str | None = Field(default=None, max_length=1000)
     variation: str | None = Field(default=None, max_length=4000)
     active: bool | None = None
+    semantic_similarity_threshold: float | None = Field(default=None, ge=0.80, le=0.99)
     source_feature: Literal["single_question", "multiple_question"] | None = None
     answer_source: (
         Literal["approved_bank", "syllabus_grounded", "general_knowledge"] | None
@@ -149,4 +152,19 @@ class AskAdminRequest(StrictModel):
         )
         if not (exact_scope or subject_global_scope):
             raise ValueError("PROMPT_SCOPE_REQUIRES_EXACT_OR_SUBJECT_GLOBAL")
+        return self
+
+    @model_validator(mode="after")
+    def validate_semantic_threshold_scope(self):
+        if self.operation not in {
+            "source_policy_get",
+            "source_policy_set_semantic_threshold",
+        }:
+            return self
+        if not self.subject_id:
+            raise ValueError("SEMANTIC_THRESHOLD_SUBJECT_REQUIRED")
+        if self.operation == "source_policy_set_semantic_threshold" and (
+            self.semantic_similarity_threshold is None
+        ):
+            raise ValueError("SEMANTIC_THRESHOLD_REQUIRED")
         return self

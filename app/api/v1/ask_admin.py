@@ -267,6 +267,73 @@ async def ask_admin(
                 )
                 return {"active_prompt_id": result.active.id}
 
+            if request.operation == "source_policy_get":
+                row = await conn.fetchrow(
+                    """SELECT class_id,subject_id,semantic_reuse_enabled,
+                              semantic_distance_threshold
+                       FROM ask_source_policies
+                       WHERE (class_id=$1 AND subject_id=$2)
+                          OR (class_id IS NULL AND subject_id=$2)
+                          OR (class_id IS NULL AND subject_id IS NULL)
+                       ORDER BY CASE
+                         WHEN class_id=$1 AND subject_id=$2 THEN 1
+                         WHEN class_id IS NULL AND subject_id=$2 THEN 2
+                         ELSE 3 END
+                       LIMIT 1""",
+                    request.class_id,
+                    request.subject_id,
+                )
+                distance = (
+                    float(row["semantic_distance_threshold"])
+                    if row and row["semantic_distance_threshold"] is not None
+                    else 0.18
+                )
+                return {
+                    "scope": {
+                        "class_id": row["class_id"] if row else None,
+                        "subject_id": row["subject_id"] if row else None,
+                    },
+                    "semantic_reuse_enabled": bool(
+                        row and row["semantic_reuse_enabled"]
+                    ),
+                    "semantic_similarity_threshold": round(1.0 - distance, 4),
+                }
+            if request.operation == "source_policy_set_semantic_threshold":
+                similarity = float(request.semantic_similarity_threshold)
+                row = await conn.fetchrow(
+                    """INSERT INTO ask_source_policies(
+                         class_id,subject_id,allow_general,semantic_reuse_enabled,
+                         semantic_distance_threshold,updated_by
+                       ) VALUES($1,$2,FALSE,TRUE,$3,$4)
+                       ON CONFLICT (COALESCE(class_id, ''),COALESCE(subject_id, ''))
+                       DO UPDATE SET semantic_reuse_enabled=TRUE,
+                                     semantic_distance_threshold=EXCLUDED.semantic_distance_threshold,
+                                     updated_by=EXCLUDED.updated_by,updated_at=NOW()
+                       RETURNING class_id,subject_id,semantic_reuse_enabled,
+                                 semantic_distance_threshold""",
+                    request.class_id,
+                    request.subject_id,
+                    1.0 - similarity,
+                    auth.uid,
+                )
+                await AuditRepository(conn).create_audit_log(
+                    actor_id=auth.uid,
+                    action="ask.semantic_threshold_changed",
+                    target_type="ask_source_policy",
+                    target_id=f"{request.class_id or 'subject-global'}:{request.subject_id}",
+                    after_value={"semantic_similarity_threshold": similarity},
+                )
+                return {
+                    "scope": {
+                        "class_id": row["class_id"],
+                        "subject_id": row["subject_id"],
+                    },
+                    "semantic_reuse_enabled": bool(row["semantic_reuse_enabled"]),
+                    "semantic_similarity_threshold": round(
+                        1.0 - float(row["semantic_distance_threshold"]), 4
+                    ),
+                }
+
             asks = AskRepository(conn)
             bank = QuestionBankRepository(conn)
             if request.operation == "candidate_list":
