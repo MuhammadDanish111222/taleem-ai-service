@@ -23,7 +23,6 @@ from app.schemas.ask import (
     AnswerSource,
     AnswerStyle,
     AskRequest,
-    TerminalStatus,
 )
 from app.services.answers.generate import AskService, AskServiceError
 from app.services.answers.normalization import normalize_question, question_hash
@@ -434,7 +433,12 @@ async def test_semantic_reuse_is_disabled_without_evaluated_policy(conn):
     result = await AskService(
         conn,
         retrieval=retrieval,
-        provider=FakeProvider(),
+        provider=FakeProvider(
+            {
+                "blocks": [{"type": "paragraph", "text": "General answer"}],
+                "cited_chunk_ids": [],
+            }
+        ),
         usage=FakeUsage(),
         prompt_service=FakePrompts(),
     ).ask(
@@ -444,7 +448,7 @@ async def test_semantic_reuse_is_disabled_without_evaluated_policy(conn):
     )
     assert retrieval.embedding_calls == 1
     assert retrieval.calls == 1
-    assert result.error_code == "NO_ACTIVE_CORPUS"
+    assert result.answer_source == AnswerSource.GENERAL_KNOWLEDGE
 
 
 @pytest.mark.asyncio
@@ -475,7 +479,7 @@ async def test_semantic_repository_never_reuses_unapproved_rows(conn):
 @pytest.mark.asyncio
 async def test_semantic_threshold_changes_approved_reuse(conn):
     revision_id = await create_approved(conn, "What is force?", "chapter-1")
-    vector = [1.0] + [0.0] * 511
+    vector = [0.9, 0.435889894] + [0.0] * 510
     await conn.execute(
         """UPDATE question_bank_revisions
            SET embedding=$2::text::halfvec,embedding_status='embedded'
@@ -535,7 +539,12 @@ async def test_ambiguous_chapterless_match_continues_to_retrieval(conn):
     result = await AskService(
         conn,
         retrieval=retrieval,
-        provider=FakeProvider(),
+        provider=FakeProvider(
+            {
+                "blocks": [{"type": "paragraph", "text": "General answer"}],
+                "cited_chunk_ids": [],
+            }
+        ),
         usage=FakeUsage(),
         prompt_service=FakePrompts(),
     ).ask(
@@ -544,8 +553,7 @@ async def test_ambiguous_chapterless_match_continues_to_retrieval(conn):
         tier=AccountTier.ANONYMOUS,
     )
     assert retrieval.calls == 1
-    assert result.terminal_status == TerminalStatus.NO_ANSWER
-    assert result.error_code == "NO_ACTIVE_CORPUS"
+    assert result.answer_source == AnswerSource.GENERAL_KNOWLEDGE
 
 
 @pytest.mark.asyncio
