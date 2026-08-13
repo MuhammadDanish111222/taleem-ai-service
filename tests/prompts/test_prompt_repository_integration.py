@@ -32,7 +32,7 @@ async def conn():
 
 
 @pytest.mark.asyncio
-async def test_postgres_prompt_hierarchy_and_shared_generation_invalidation(conn):
+async def test_postgres_prompt_subject_global_and_exact_resolution(conn):
     cache = SharedPromptCache(
         conn,
         redis.Redis.from_url(REDIS_URL, decode_responses=True),
@@ -40,9 +40,7 @@ async def test_postgres_prompt_hierarchy_and_shared_generation_invalidation(conn
     )
     service = PromptService(PostgresPromptRepository(conn), cache=cache)
     scopes = [
-        PromptScope(),
         PromptScope(subject_id="physics"),
-        PromptScope(class_id="class-9", subject_id="physics"),
         PromptScope(board_id="punjab", class_id="class-9", subject_id="physics"),
     ]
     for index, scope in enumerate(scopes, start=1):
@@ -60,16 +58,16 @@ async def test_postgres_prompt_hierarchy_and_shared_generation_invalidation(conn
         answer_mode=AnswerMode.SHORT,
         scope=PromptScope(board_id="punjab", class_id="class-9", subject_id="physics"),
     )
-    assert resolved.record.content == "Teaching prompt 4"
+    assert resolved.record.content == "Teaching prompt 2"
     generation = await conn.fetchval(
         """SELECT generation FROM cache_generations
            WHERE namespace='prompt' AND cache_key='ask_grounded:short'"""
     )
-    assert generation == 5
+    assert generation == 3
     assert (
         await conn.fetchval(
             """SELECT COUNT(*) FROM admin_audit_logs
                WHERE action='prompt.activated'"""
         )
-        == 4
+        == 2
     )

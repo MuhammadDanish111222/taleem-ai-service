@@ -48,6 +48,7 @@ from app.services.prompts.models import (
     AnswerMode as PromptAnswerMode,
 )
 from app.services.prompts.models import (
+    PromptConfigurationError,
     PromptKey,
     PromptScope,
 )
@@ -538,6 +539,10 @@ class AskService:
                 raise AskServiceError(exc.code.value, status_code=503) from None
             if isinstance(exc, AnswerValidationError):
                 raise AskServiceError(str(exc), status_code=502) from None
+            if isinstance(exc, PromptConfigurationError):
+                raise AskServiceError(
+                    "PROMPT_CONFIGURATION_MISSING", status_code=503
+                ) from exc
             raise AskServiceError("ASK_INTERNAL_FAILURE", status_code=500) from None
 
     async def _expand_answer_topics(
@@ -783,4 +788,6 @@ class AskService:
             return exc.code.value
         if isinstance(exc, AnswerValidationError):
             return str(exc)
+        if isinstance(exc, PromptConfigurationError):
+            return "PROMPT_CONFIGURATION_MISSING"
         return "ASK_INTERNAL_FAILURE"

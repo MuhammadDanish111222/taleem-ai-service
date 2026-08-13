@@ -7,6 +7,7 @@ from app.providers.llm.deepseek import StructuredGeneration, TokenUsage
 from app.services.prompts.models import (
     AnswerMode,
     PromptActivation,
+    PromptConfigurationError,
     PromptKey,
     PromptRecord,
     PromptScope,
@@ -171,32 +172,14 @@ class FakeProvider:
     [
         (FULL_SCOPE, [FULL_SCOPE]),
         (
-            PromptScope(class_id="10", subject_id="biology"),
-            [
-                FULL_SCOPE,
-                PromptScope(class_id="10", subject_id="biology"),
-            ],
-        ),
-        (
             PromptScope(subject_id="biology"),
-            [
-                FULL_SCOPE,
-                PromptScope(class_id="10", subject_id="biology"),
-                PromptScope(subject_id="biology"),
-            ],
-        ),
-        (
-            PromptScope(),
-            [
-                FULL_SCOPE,
-                PromptScope(class_id="10", subject_id="biology"),
-                PromptScope(subject_id="biology"),
-                PromptScope(),
-            ],
+            [FULL_SCOPE, PromptScope(subject_id="biology")],
         ),
     ],
 )
-async def test_resolution_uses_locked_scope_order(available_scope, expected_calls):
+async def test_resolution_uses_exact_then_subject_global(
+    available_scope, expected_calls
+):
     record = _record("active", available_scope)
     repository = FakeRepository([record])
     cache = FakeCache()
@@ -220,6 +203,45 @@ async def test_resolution_uses_locked_scope_order(available_scope, expected_call
     )
     assert cached.record.scope == available_scope
     assert repository.find_calls == expected_calls
+
+
+@pytest.mark.asyncio
+async def test_resolution_skips_inactive_exact_for_active_subject_global():
+    inactive_exact = _record("exact-inactive", FULL_SCOPE, status=PromptStatus.RETIRED)
+    global_subject = _record("subject-global", PromptScope(subject_id="biology"))
+    repository = FakeRepository([inactive_exact, global_subject])
+    service = PromptService(repository)
+
+    resolved = await service.resolve_active(
+        prompt_key=PromptKey.ASK_GROUNDED,
+        answer_mode=AnswerMode.SHORT,
+        scope=FULL_SCOPE,
+    )
+
+    assert resolved.record.id == "subject-global"
+    assert repository.find_calls == [FULL_SCOPE, PromptScope(subject_id="biology")]
+
+
+@pytest.mark.asyncio
+async def test_resolution_never_cross_falls_back_between_type_mode_or_subject():
+    wrong_type = replace(
+        _record("general-short", FULL_SCOPE), prompt_key=PromptKey.ASK_GENERAL
+    )
+    wrong_mode = replace(
+        _record("grounded-long", FULL_SCOPE), answer_mode=AnswerMode.LONG
+    )
+    wrong_subject = _record("other-subject", PromptScope(subject_id="chemistry"))
+    repository = FakeRepository([wrong_type, wrong_mode, wrong_subject])
+    service = PromptService(repository)
+
+    with pytest.raises(PromptConfigurationError, match="PROMPT_CONFIGURATION_MISSING"):
+        await service.resolve_active(
+            prompt_key=PromptKey.ASK_GROUNDED,
+            answer_mode=AnswerMode.SHORT,
+            scope=FULL_SCOPE,
+        )
+
+    assert repository.find_calls == [FULL_SCOPE, PromptScope(subject_id="biology")]
 
 
 @pytest.mark.asyncio
@@ -315,6 +337,8 @@ def test_immutable_prefix_keeps_source_integrity_outside_editable_content():
     assert grounded.index("allowed identifier") < grounded.index("Ignore all")
     assert "Use the supplied textbook evidence first" in grounded
     assert "Never attach an unrelated textbook citation" in grounded
+    assert "Additional textbook knowledge" not in grounded
+    assert "Do not append optional, extra, or unrelated textbook material" in grounded
     assert "empty cited_chunk_ids array" in general
     assert "never emit visual_ref" in general
 
@@ -326,3 +350,7 @@ def test_scope_rejects_unsupported_partial_hierarchies():
         PromptScope(board_id="fbise")
     with pytest.raises(ValueError, match="PROMPT_SCOPE_CLASS_REQUIRES_SUBJECT"):
         PromptScope(class_id="10")
+    with pytest.raises(
+        ValueError, match="PROMPT_RESOLUTION_REQUIRES_FULL_STUDENT_SCOPE"
+    ):
+        PromptScope(subject_id="biology").resolution_chain()

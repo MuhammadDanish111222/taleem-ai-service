@@ -24,9 +24,25 @@ class PromptStatus(StrEnum):
     RETIRED = "retired"
 
 
+class PromptConfigurationError(LookupError):
+    """No active prompt is configured for a student's required prompt family."""
+
+    def __init__(
+        self, *, prompt_key: PromptKey, answer_mode: AnswerMode, scope: "PromptScope"
+    ) -> None:
+        self.prompt_key = prompt_key
+        self.answer_mode = answer_mode
+        self.scope = scope
+        super().__init__(
+            "PROMPT_CONFIGURATION_MISSING:"
+            f"{prompt_key.value}:{answer_mode.value}:"
+            f"{scope.board_id}/{scope.class_id}/{scope.subject_id}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class PromptScope:
-    """One of the four supported hierarchy scopes."""
+    """A persisted prompt scope; student resolution uses exact then subject-global."""
 
     board_id: str | None = None
     class_id: str | None = None
@@ -44,19 +60,15 @@ class PromptScope:
             raise ValueError("PROMPT_SCOPE_CLASS_REQUIRES_SUBJECT")
 
     def resolution_chain(self) -> tuple[PromptScope, ...]:
-        """Return most-specific to global scopes without duplicates."""
+        """Return the only permitted student resolution order.
 
-        candidates = (
-            self,
-            PromptScope(class_id=self.class_id, subject_id=self.subject_id),
-            PromptScope(subject_id=self.subject_id),
-            PromptScope(),
-        )
-        unique: list[PromptScope] = []
-        for candidate in candidates:
-            if candidate not in unique:
-                unique.append(candidate)
-        return tuple(unique)
+        Legacy class/subject and application-global rows remain representable for
+        history, but are deliberately never candidates for student traffic.
+        """
+
+        if self.board_id is None or self.class_id is None or self.subject_id is None:
+            raise ValueError("PROMPT_RESOLUTION_REQUIRES_FULL_STUDENT_SCOPE")
+        return (self, PromptScope(subject_id=self.subject_id))
 
 
 @dataclass(frozen=True, slots=True)

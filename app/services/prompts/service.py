@@ -9,6 +9,7 @@ from app.services.prompts.cache import NullPromptCache, PromptCache
 from app.services.prompts.models import (
     AnswerMode,
     PromptActivation,
+    PromptConfigurationError,
     PromptKey,
     PromptRecord,
     PromptScope,
@@ -39,15 +40,12 @@ not emit answer_source, citations, confidence, or explanatory wrapper fields.
 _GROUNDED_SOURCE_RULES = """\
 Use the supplied textbook evidence first. JSON must contain a blocks array and a \
 cited_chunk_ids array. Blocks may be paragraph, heading, bullet_list, equation, \
-or visual_ref. For long answers, cover the complete supplied textbook topic or \
-topics: \
-organize the core exam answer with meaningful headings and bullet lists, then \
-place relevant examples, applications, side facts, or enrichment that are in \
-the supplied selected topic or topics but not essential to the direct answer under the exact \
-heading "Additional textbook knowledge (optional)". Do not omit such supplied \
-selected-topic material and do not label an essential answer point optional. Insert each \
-useful allowed visual_ref immediately after the section it supports. For short \
-answers, remain concise and include only directly relevant textbook points. When the \
+or visual_ref. For long answers, answer the complete question using the supplied \
+textbook topic or topics; organize the direct answer with meaningful headings and \
+bullet lists when useful. Do not append optional, extra, or unrelated textbook \
+material unless the student explicitly asks for it. Insert each useful allowed \
+visual_ref immediately after the section it supports. For short answers, remain \
+concise and include only directly relevant textbook points. When the \
 answer is supported by the evidence, cite at least one supporting allowed chunk \
 identifier. Every cited chunk and visual_ref must use an allowed identifier \
 exactly. When the evidence does not support the answer and allow_general is true, \
@@ -242,15 +240,14 @@ class PromptService:
         answer_mode: AnswerMode,
         scope: PromptScope,
     ) -> ResolvedPrompt:
-        if scope.board_id is None or scope.class_id is None or scope.subject_id is None:
-            raise ValueError("PROMPT_RESOLUTION_REQUIRES_FULL_STUDENT_SCOPE")
+        candidate_scopes = scope.resolution_chain()
         cached = await self._cache.get(prompt_key, answer_mode, scope)
         if cached is not None:
             return ResolvedPrompt(
                 record=cached,
                 system_prompt=compose_system_prompt(prompt_key, cached.content),
             )
-        for candidate_scope in scope.resolution_chain():
+        for candidate_scope in candidate_scopes:
             record = await self._repository.find_active(
                 prompt_key=prompt_key,
                 answer_mode=answer_mode,
@@ -266,7 +263,9 @@ class PromptService:
                     record=record,
                     system_prompt=compose_system_prompt(prompt_key, record.content),
                 )
-        raise LookupError("ACTIVE_PROMPT_NOT_FOUND")
+        raise PromptConfigurationError(
+            prompt_key=prompt_key, answer_mode=answer_mode, scope=scope
+        )
 
     async def _require_prompt(self, prompt_id: str) -> PromptRecord:
         if type(prompt_id) is not str or not prompt_id.strip():

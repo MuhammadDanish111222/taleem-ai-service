@@ -129,8 +129,8 @@ class SharedPromptCache:
         )
         import hashlib
 
-        return f"prompts:active:v2:{generation}:{hashlib.sha256(payload.encode()).hexdigest()}"
+        return f"prompts:active:v3:{generation}:{hashlib.sha256(payload.encode()).hexdigest()}"
 
     @staticmethod
     def _generation_key(prompt_key: PromptKey, answer_mode: AnswerMode) -> str:
-        return f"prompts:generation:v2:{prompt_key.value}:{answer_mode.value}"
+        return f"prompts:generation:v3:{prompt_key.value}:{answer_mode.value}"

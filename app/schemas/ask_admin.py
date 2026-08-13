@@ -134,3 +134,19 @@ class AskAdminRequest(StrictModel):
         default_factory=list, max_length=500
     )
     limit: int = Field(default=50, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def validate_prompt_management_scope(self):
+        if self.operation not in {"prompt_history", "prompt_create_draft"}:
+            return self
+        if self.prompt_key is None or self.answer_mode is None:
+            return self
+        if self.answer_mode == AnswerMode.MCQ:
+            raise ValueError("PROMPT_MCQ_CONFIGURATION_UNSUPPORTED")
+        exact_scope = bool(self.board_id and self.class_id and self.subject_id)
+        subject_global_scope = bool(
+            self.subject_id and self.board_id is None and self.class_id is None
+        )
+        if not (exact_scope or subject_global_scope):
+            raise ValueError("PROMPT_SCOPE_REQUIRES_EXACT_OR_SUBJECT_GLOBAL")
+        return self
