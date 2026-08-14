@@ -12,7 +12,7 @@
       {
         "source_order": 1,
         "question_text": "Explain why a seat belt is important in a moving car.",
-        "answer_mode": "long",
+        "answer_mode": "short",
         "mcq_options": [],
         "source_locator": {"page_number": 1}
       },

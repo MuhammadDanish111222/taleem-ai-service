@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 from typing import Any
 
 import httpx
 
 from app.core.config import get_settings
-from app.providers.ocr.base import OCRProviderError
+from app.providers.ocr.base import OCRExtractedQuestion, OCRProviderError
 
 DEFAULT_GEMINI_OCR_MODEL = "gemini-3.6-flash"
 
@@ -31,7 +32,7 @@ def _detect_mime_type(image_bytes: bytes, explicit_mime: str | None = None) -> s
 
 
 class GeminiOCRProvider:
-    """Non-blocking Gemini Vision OCR provider extracting plain text from page images."""
+    """Non-blocking Gemini Vision extraction provider for scanned paper pages."""
 
     def __init__(
         self,
@@ -89,44 +90,191 @@ class GeminiOCRProvider:
         }
 
         try:
+            return self._candidate_text(await self._post(url, payload))
+        except OCRProviderError:
+            raise
+        except Exception:
+            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+
+    async def extract_image_questions(
+        self, image_bytes: bytes, mime_type: str | None = None
+    ) -> tuple[OCRExtractedQuestion, ...]:
+        """Extract only paper structure; answers and educational guesses are forbidden."""
+        if not image_bytes:
+            return ()
+        api_key = self._resolve_api_key()
+        b64_image = base64.b64encode(image_bytes).decode("ascii")
+        resolved_mime = _detect_mime_type(image_bytes, mime_type)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={api_key}"
+        payload: dict[str, Any] = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": (
+                                "Extract this scanned examination-paper page into the supplied JSON schema. "
+                                "Return questions only: never solve, answer, explain, use outside knowledge, "
+                                "or infer missing text/options. Preserve printed order, labels, wording, section "
+                                "headings, and option text. Classification priority is exact: a recognized Multiple "
+                                "Choice/MCQ/Objective/Choose-correct section means mcq; a recognized Short Questions/"
+                                "Short Answer section means short; a recognized Long Questions/Long Answer/Detailed "
+                                "Questions section means long. A recognized section wins over verbs and options. "
+                                "Without a recognized type section, valid contiguous A-starting options mean mcq and "
+                                "no options mean short. MCQ-section questions may have zero options. Never invent "
+                                "options; use not_clear with an unclear_reason when text or printed options are unreadable."
+                            )
+                        },
+                        {
+                            "inline_data": {
+                                "mime_type": resolved_mime,
+                                "data": b64_image,
+                            }
+                        },
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseJsonSchema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["questions"],
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "maxItems": 60,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": [
+                                    "display_label",
+                                    "section_context",
+                                    "question_text",
+                                    "answer_mode",
+                                    "mcq_options",
+                                    "unclear_reason",
+                                ],
+                                "properties": {
+                                    "display_label": {"type": "string"},
+                                    "section_context": {"type": ["string", "null"]},
+                                    "question_text": {"type": "string"},
+                                    "answer_mode": {
+                                        "type": "string",
+                                        "enum": ["mcq", "short", "long", "not_clear"],
+                                    },
+                                    "mcq_options": {
+                                        "type": "array",
+                                        "maxItems": 12,
+                                        "items": {
+                                            "type": "object",
+                                            "additionalProperties": False,
+                                            "required": ["label", "text"],
+                                            "properties": {
+                                                "label": {"type": "string"},
+                                                "text": {"type": "string"},
+                                            },
+                                        },
+                                    },
+                                    "unclear_reason": {"type": ["string", "null"]},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        data = await self._post(url, payload)
+        try:
+            text = self._candidate_text(data)
+            decoded = json.loads(text)
+            questions = decoded["questions"]
+            if not isinstance(questions, list):
+                raise ValueError
+            output: list[OCRExtractedQuestion] = []
+            for question in questions:
+                if not isinstance(question, dict) or set(question) != {
+                    "display_label",
+                    "section_context",
+                    "question_text",
+                    "answer_mode",
+                    "mcq_options",
+                    "unclear_reason",
+                }:
+                    raise ValueError
+                options = question["mcq_options"]
+                if not isinstance(options, list) or not all(
+                    isinstance(option, dict) and set(option) == {"label", "text"}
+                    for option in options
+                ):
+                    raise ValueError
+                if question["answer_mode"] not in {"mcq", "short", "long", "not_clear"}:
+                    raise ValueError
+                if not all(
+                    isinstance(question[key], str)
+                    for key in ("display_label", "question_text")
+                ):
+                    raise ValueError
+                if question["section_context"] is not None and not isinstance(
+                    question["section_context"], str
+                ):
+                    raise ValueError
+                if question["unclear_reason"] is not None and not isinstance(
+                    question["unclear_reason"], str
+                ):
+                    raise ValueError
+                output.append(
+                    OCRExtractedQuestion(
+                        display_label=question["display_label"].strip(),
+                        section_context=question["section_context"].strip()
+                        if question["section_context"]
+                        else None,
+                        question_text=question["question_text"].strip(),
+                        answer_mode=question["answer_mode"],
+                        mcq_options=tuple(
+                            {
+                                "label": str(option["label"]).strip(),
+                                "text": str(option["text"]).strip(),
+                            }
+                            for option in options
+                        ),
+                        unclear_reason=question["unclear_reason"].strip()
+                        if question["unclear_reason"]
+                        else None,
+                    )
+                )
+            return tuple(output)
+        except Exception:
+            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+
+    async def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
             if self._client is not None:
                 response = await self._client.post(
-                    url,
-                    json=payload,
-                    timeout=self._timeout_seconds,
+                    url, json=payload, timeout=self._timeout_seconds
                 )
             else:
                 async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                    response = await client.post(
-                        url,
-                        json=payload,
-                    )
+                    response = await client.post(url, json=payload)
         except httpx.TimeoutException:
             raise OCRProviderError("MULTIPLE_ASK_OCR_TIMEOUT", retryable=True)
         except Exception:
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
-
         if response.status_code in (401, 403):
             raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
-        if response.status_code == 429:
-            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
-        if response.status_code >= 500:
-            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
         if response.status_code != 200:
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
-
         try:
-            data = response.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                return ""
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            extracted_parts = [
-                part.get("text", "")
-                for part in parts
-                if isinstance(part, dict) and "text" in part
-            ]
-            return "\n".join(extracted_parts).strip()
+            return response.json()
         except Exception:
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+
+    @staticmethod
+    def _candidate_text(data: dict[str, Any]) -> str:
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise ValueError
+        return "\n".join(
+            part.get("text", "")
+            for part in candidates[0].get("content", {}).get("parts", [])
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        ).strip()

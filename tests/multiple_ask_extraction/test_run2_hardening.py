@@ -14,24 +14,16 @@ from app.services.multiple_ask_extraction_service import (
 from app.services.usage.service import UsageService
 
 
-def test_corrected_mcq_requires_exactly_four_ordered_options() -> None:
+def test_corrected_mcq_accepts_zero_or_dynamic_ordered_options() -> None:
     validate = MultipleAskExtractionService._validate_correction_options
-    assert validate(
-        "mcq",
-        [
-            {"label": "A", "text": "one"},
-            {"label": "B", "text": "two"},
-            {"label": "C", "text": "three"},
-            {"label": "D", "text": "four"},
-        ],
-    ) == [
-        {"label": "A", "text": "one"},
-        {"label": "B", "text": "two"},
-        {"label": "C", "text": "three"},
-        {"label": "D", "text": "four"},
-    ]
+    assert validate("mcq", []) == []
+    for labels in ("AB", "ABC", "ABCD", "ABCDE"):
+        options = [{"label": label, "text": label.lower()} for label in labels]
+        assert validate("mcq", options) == options
     with pytest.raises(MultipleAskExtractionError, match="OPTIONS_INVALID"):
-        validate("mcq", [{"label": "A", "text": "one"}])
+        validate(
+            "mcq", [{"label": "A", "text": "one"}, {"label": "C", "text": "three"}]
+        )
     with pytest.raises(MultipleAskExtractionError, match="OPTIONS_INVALID"):
         validate("short", [{"label": "A", "text": "one"}])
 

@@ -23,11 +23,7 @@ _ROMAN_START = re.compile(
     r"^\s*(?:\(\s*)?(?P<label>i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)(?:\s*\))?\s*[.)]\s*(?P<text>.*)$",
     re.I,
 )
-_OPTION = re.compile(r"^\s*\(?\s*([A-Da-d])\s*\)?\s*[.)]\s*(.*\S)\s*$")
-_LONG_CUES = re.compile(
-    r"\b(explain|describe|discuss|compare|derive|prove|how|write\s+(?:a\s+)?detailed\s+note)\b",
-    re.I,
-)
+_OPTION = re.compile(r"^\s*\(?\s*([A-Za-z])\s*\)?\s*[.)]\s*(.*)$")
 _UNREADABLE_CUES = re.compile(
     r"\b(illegible|unclear|unreadable)\b|\[\s*illegible", re.I
 )
@@ -35,7 +31,7 @@ _GROUP_CUES = re.compile(
     r"\b(any\s+\w+\s+parts?|following\s+parts?|short\s+answers?|attempt\s+any|answer\s+any)\b",
     re.I,
 )
-_SECTION = re.compile(r"^\s*(SECTION[-\s]*[IVXLC]+)\s*$", re.I)
+_SECTION = re.compile(r"^\s*(SECTION\s*[-:]?\s*(?:[A-Z]|[IVXLC]+|\d+))\s*$", re.I)
 _DECORATION = re.compile(
     r"^\s*(?:PAGE\s*\d+|TIME\s*(?:ALLOWED)?|TOTAL\s+MARKS?|PAPER\s+CODE|ROLL\s+NO)\b",
     re.I,
@@ -68,6 +64,55 @@ class _Candidate:
     label: str
     lines: list[str]
     section_context: str | None
+    section_answer_mode: AnswerMode | None
+
+
+def _section_mode(value: str) -> AnswerMode | None:
+    """Recognize only explicit paper section headings/instructions."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    if re.search(
+        r"\b(?:mcqs?|multiple choice questions?|objective questions?|choose (?:the )?correct answer)\b",
+        normalized,
+    ):
+        return "mcq"
+    if re.search(
+        r"\b(?:short questions?|short answer questions?|answer the following short questions?)\b",
+        normalized,
+    ):
+        return "short"
+    if re.search(
+        r"\b(?:long questions?|long answer questions?|detailed questions?)\b",
+        normalized,
+    ):
+        return "long"
+    return None
+
+
+def _section_heading(
+    value: str, inherited: str | None
+) -> tuple[str, AnswerMode | None] | None:
+    """Keep generic section labels, but never let them invent a mode."""
+    label = value.strip().rstrip(":").strip()
+    if _start(label) is not None:
+        return None
+    generic = _SECTION.match(label)
+    if generic:
+        return generic.group(1).upper(), None
+    mode = _section_mode(label)
+    if mode is None:
+        return None
+    prefix = inherited.split(" — ", 1)[0] if inherited else None
+    context = f"{prefix} — {label}" if prefix else label
+    return context, mode
+
+
+def _valid_options(options: list[dict[str, str]]) -> bool:
+    if len(options) < 2:
+        return False
+    expected = [chr(ord("A") + index) for index in range(len(options))]
+    return [item["label"] for item in options] == expected and all(
+        item["text"].strip() for item in options
+    )
 
 
 def _start(line: str) -> tuple[Literal["arabic", "roman", "lettered"], str, str] | None:
@@ -137,7 +182,9 @@ def _question_from(
             continue
         option = _OPTION.match(line)
         if option is not None:
-            options.append({"label": option.group(1).upper(), "text": option.group(2)})
+            options.append(
+                {"label": option.group(1).upper(), "text": option.group(2).strip()}
+            )
             continue
         cleaned = _MARKS_SUFFIX.sub("", line).strip()
         if not cleaned:
@@ -147,26 +194,27 @@ def _question_from(
         else:
             question_lines.append(cleaned)
     question_text = "\n".join(question_lines).strip()
-    expected_labels = ["A", "B", "C", "D"]
-    complete_mcq = (
-        len(options) == 4 and [item["label"] for item in options] == expected_labels
+    valid_options = _valid_options(options)
+    authoritative_mode = candidate.section_answer_mode or _section_mode(
+        group_context or ""
     )
     if not question_text or _UNREADABLE_CUES.search(question_text):
         mode: AnswerMode = "not_clear"
         reason = "QUESTION_TEXT_UNCLEAR"
-    elif options and not complete_mcq:
+    elif authoritative_mode in {"short", "long"}:
+        # A recognized paper section is authoritative; wording and option-like
+        # OCR fragments must not reclassify the question.
+        mode = authoritative_mode
+        reason = None
+    elif options and not valid_options:
         mode = "not_clear"
-        reason = "MCQ_OPTIONS_INCOMPLETE"
-    elif complete_mcq:
+        reason = "MCQ_OPTIONS_INVALID"
+    elif authoritative_mode == "mcq":
+        # Printed MCQ sections can legitimately omit their choices.
         mode = "mcq"
         reason = None
-    elif group_context and re.search(r"\bshort\s+answers?\b", group_context, re.I):
-        # The paper's section instruction is stronger evidence than a word
-        # such as "why" inside one individual short question.
-        mode = "short"
-        reason = None
-    elif _LONG_CUES.search(question_text):
-        mode = "long"
+    elif valid_options:
+        mode = "mcq"
         reason = None
     else:
         mode = "short"
@@ -190,14 +238,20 @@ def extract_ordered_questions(
     candidates: list[_Candidate] = []
     page_number = 1
     section_context: str | None = None
+    section_answer_mode: AnswerMode | None = None
     current: _Candidate | None = None
     for raw_line in source_text.split("\n"):
         for fragment_index, fragment in enumerate(raw_line.split("\f")):
             if fragment_index:
                 page_number += 1
-            section = _SECTION.match(fragment)
+            section = _section_heading(fragment, section_context)
             if section is not None:
-                section_context = section.group(1).upper()
+                section_context, detected_mode = section
+                if detected_mode is not None:
+                    section_answer_mode = detected_mode
+                elif _SECTION.match(fragment):
+                    # A generic label starts a new context but carries no type.
+                    section_answer_mode = None
                 continue
             for line in _split_inline_starts(fragment):
                 marker = _start(line)
@@ -206,7 +260,12 @@ def extract_ordered_questions(
                         candidates.append(current)
                     kind, label, text = marker
                     current = _Candidate(
-                        page_number, kind, label, [text], section_context
+                        page_number,
+                        kind,
+                        label,
+                        [text],
+                        section_context,
+                        section_answer_mode,
                     )
                 elif current is not None:
                     current.lines.append(line.strip())

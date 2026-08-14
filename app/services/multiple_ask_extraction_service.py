@@ -11,7 +11,7 @@ import fitz
 from pypdf import PdfReader
 
 from app.core.config import get_settings
-from app.providers.ocr.base import OCRProvider, OCRProviderError
+from app.providers.ocr.base import OCRExtractedQuestion, OCRProvider, OCRProviderError
 from app.providers.ocr.gemini import GeminiOCRProvider
 from app.repositories.multiple_ask_repository import MultipleAskRepository
 from app.services.answers.normalization import normalize_question, question_hash
@@ -46,6 +46,34 @@ def normalize_source_text(text: str, *, max_characters: int) -> str:
 
 def _meaningful_embedded_text(text: str) -> bool:
     return len(re.findall(r"[A-Za-z0-9]", text)) >= 8
+
+
+def _structured_section_mode(context: str | None) -> str | None:
+    value = re.sub(r"[^a-z0-9]+", " ", (context or "").lower()).strip()
+    if re.search(
+        r"\b(?:mcqs?|multiple choice questions?|objective questions?|choose (?:the )?correct answer)\b",
+        value,
+    ):
+        return "mcq"
+    if re.search(
+        r"\b(?:short questions?|short answer questions?|answer the following short questions?)\b",
+        value,
+    ):
+        return "short"
+    if re.search(
+        r"\b(?:long questions?|long answer questions?|detailed questions?)\b", value
+    ):
+        return "long"
+    return None
+
+
+def _valid_dynamic_options(options: list[dict[str, str]]) -> bool:
+    return (
+        len(options) >= 2
+        and [option["label"] for option in options]
+        == [chr(ord("A") + index) for index in range(len(options))]
+        and all(option["text"] for option in options)
+    )
 
 
 class MultipleAskExtractionService:
@@ -207,9 +235,9 @@ class MultipleAskExtractionService:
                 return str(context["workflow_status"])
         if resume:
             return await self._extract_corrections(context)
-        source = await self._normalized_source(context)
         try:
-            extracted = extract_ordered_questions(
+            source = await self._normalized_source(context)
+            extracted = source.get("structured_questions") or extract_ordered_questions(
                 source["normalized_text"],
                 max_questions=get_settings().MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS,
             )
@@ -220,7 +248,10 @@ class MultipleAskExtractionService:
                 error_code="MULTIPLE_ASK_TOO_MANY_QUESTIONS",
             )
             return "too_many_questions"
-        records = [self._record(item) for item in extracted]
+        records = [
+            self._record(ExtractedQuestion(**{**item.__dict__, "source_order": index}))
+            for index, item in enumerate(extracted)
+        ]
         if not records:
             records = [
                 {
@@ -316,17 +347,17 @@ class MultipleAskExtractionService:
                 else settings.MULTIPLE_ASK_MAX_PDF_BYTES,
             )
             if context["input_kind"] == "image":
-                text = await self._ocr_text(raw)
-                normalized = normalize_source_text(
-                    text, max_characters=settings.MULTIPLE_ASK_MAX_TEXT_CHARACTERS
-                )
+                structured = await self._ocr_questions(raw, page_number=1)
+                normalized = self._structured_source_text(structured)
                 kind, locators, provider = (
-                    "image_ocr",
+                    "image_structured_extraction",
                     [{"page_number": 1, "source_kind": "ocr"}],
                     "gemini",
                 )
             else:
-                normalized, kind, locators, provider = await self._pdf_text(raw)
+                normalized, kind, locators, provider, structured = await self._pdf_text(
+                    raw
+                )
         async with self._conn.transaction():
             cached = await self._repo.save_normalized_source_once(
                 session_id=str(context["upload_session_id"]),
@@ -335,15 +366,21 @@ class MultipleAskExtractionService:
                 source_kind=kind,
                 ocr_provider=provider,
             )
-        return cached
+        if context["input_kind"] == "image":
+            return {**cached, "structured_questions": structured}
+        return {
+            **cached,
+            **({"structured_questions": structured} if structured else {}),
+        }
 
     async def _pdf_text(
         self, raw: bytes
-    ) -> tuple[str, str, list[dict[str, Any]], str | None]:
+    ) -> tuple[str, str, list[dict[str, Any]], str | None, list[ExtractedQuestion]]:
         reader = PdfReader(BytesIO(raw), strict=True)
         document = fitz.open(stream=raw, filetype="pdf")
         pages: list[str] = []
         locators: list[dict[str, Any]] = []
+        structured: list[ExtractedQuestion] = []
         used_ocr = False
         try:
             for index, page in enumerate(reader.pages):
@@ -351,6 +388,11 @@ class MultipleAskExtractionService:
                 page_number = index + 1
                 if _meaningful_embedded_text(embedded):
                     pages.append(embedded)
+                    structured.extend(
+                        self._with_page_number(
+                            extract_ordered_questions(embedded), page_number
+                        )
+                    )
                     locators.append(
                         {"page_number": page_number, "source_kind": "embedded_text"}
                     )
@@ -370,12 +412,20 @@ class MultipleAskExtractionService:
                         raise MultipleAskExtractionError(
                             "MULTIPLE_ASK_PDF_RENDER_LIMIT"
                         )
-                    pages.append(await self._ocr_text(pixmap.tobytes("png")))
+                    scanned = await self._ocr_questions(
+                        pixmap.tobytes("png"), page_number=page_number
+                    )
+                    structured.extend(scanned)
+                    pages.append(self._structured_source_text(scanned))
                 finally:
                     del pixmap
                 locators.append({"page_number": page_number, "source_kind": "ocr"})
         finally:
             document.close()
+        if len(structured) > get_settings().MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS:
+            raise QuestionLimitExceeded(
+                len(structured), get_settings().MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS
+            )
         normalized = normalize_source_text(
             "\f\n".join(pages),
             max_characters=get_settings().MULTIPLE_ASK_MAX_TEXT_CHARACTERS,
@@ -385,6 +435,109 @@ class MultipleAskExtractionService:
             "pdf_ocr" if used_ocr else "pdf_embedded_text",
             locators,
             "gemini" if used_ocr else None,
+            structured,
+        )
+
+    @staticmethod
+    def _with_page_number(
+        items: list[ExtractedQuestion], page_number: int
+    ) -> list[ExtractedQuestion]:
+        return [
+            ExtractedQuestion(
+                **{
+                    **item.__dict__,
+                    "source_locator": {
+                        **item.source_locator,
+                        "page_number": page_number,
+                    },
+                }
+            )
+            for item in items
+        ]
+
+    @staticmethod
+    def _structured_source_text(items: list[ExtractedQuestion]) -> str:
+        lines: list[str] = []
+        current_section: str | None = None
+        for item in items:
+            if item.section_context and item.section_context != current_section:
+                lines.append(item.section_context)
+                current_section = item.section_context
+            lines.append(f"{item.display_label}. {item.question_text}")
+            lines.extend(
+                f"{option['label']}. {option['text']}" for option in item.mcq_options
+            )
+        return "\n".join(lines)
+
+    async def _ocr_questions(
+        self, image_bytes: bytes, *, page_number: int
+    ) -> list[ExtractedQuestion]:
+        structured_extract = getattr(self._ocr, "extract_image_questions", None)
+        if structured_extract is None:
+            # Compatibility for bounded fakes and legacy providers; production
+            # Gemini always takes the structured path.
+            return self._with_page_number(
+                extract_ordered_questions(await self._ocr_text(image_bytes)),
+                page_number,
+            )
+        try:
+            raw_items: tuple[OCRExtractedQuestion, ...] = await structured_extract(
+                image_bytes
+            )
+        except OCRProviderError as exc:
+            raise MultipleAskExtractionError(exc.code, status_code=503) from exc
+        output: list[ExtractedQuestion] = []
+        for source_order, item in enumerate(raw_items):
+            output.append(
+                self._validated_structured_item(item, source_order, page_number)
+            )
+        return output
+
+    @staticmethod
+    def _validated_structured_item(
+        item: OCRExtractedQuestion, source_order: int, page_number: int
+    ) -> ExtractedQuestion:
+        options = [
+            {"label": option["label"].upper().strip(), "text": option["text"].strip()}
+            for option in item.mcq_options
+        ]
+        if not item.display_label or item.answer_mode not in {
+            "short",
+            "long",
+            "mcq",
+            "not_clear",
+        }:
+            raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
+        if item.answer_mode == "not_clear":
+            return ExtractedQuestion(
+                source_order,
+                item.display_label,
+                item.section_context,
+                item.question_text,
+                "not_clear",
+                (),
+                item.unclear_reason or "QUESTION_TEXT_UNCLEAR",
+                {"page_number": page_number, "display_label": item.display_label},
+            )
+        section_mode = _structured_section_mode(item.section_context)
+        expected = section_mode or ("mcq" if options else "short")
+        if options and not _valid_dynamic_options(options):
+            raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
+        if (
+            item.answer_mode != expected
+            or not item.question_text
+            or (item.answer_mode != "mcq" and options)
+        ):
+            raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
+        return ExtractedQuestion(
+            source_order,
+            item.display_label,
+            item.section_context,
+            item.question_text,
+            item.answer_mode,
+            tuple(options),
+            None,
+            {"page_number": page_number, "display_label": item.display_label},
         )
 
     async def _ocr_text(self, image_bytes: bytes) -> str:
@@ -480,9 +633,7 @@ class MultipleAskExtractionService:
             }
             for option in options
         ]
-        if [option["label"] for option in normalized] != ["A", "B", "C", "D"] or any(
-            not option["text"] for option in normalized
-        ):
+        if normalized and not _valid_dynamic_options(normalized):
             raise MultipleAskExtractionError("MULTIPLE_ASK_CORRECTION_OPTIONS_INVALID")
         return normalized
 

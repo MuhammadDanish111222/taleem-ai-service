@@ -112,10 +112,10 @@ def test_subjective_grouping_keeps_every_roman_and_lettered_answerable_subpart()
         "short",
         "short",
         "short",
-        "long",
-        "long",
         "short",
-        "long",
+        "short",
+        "short",
+        "short",
     ]
     assert [item.display_label for item in items[:4]] == [
         "2(i)",
@@ -150,6 +150,47 @@ def test_incomplete_or_misordered_mcq_options_are_not_answerable_mcqs():
     )
     assert [item.answer_mode for item in items] == ["not_clear", "not_clear"]
     assert [item.unclear_reason for item in items] == [
-        "MCQ_OPTIONS_INCOMPLETE",
-        "MCQ_OPTIONS_INCOMPLETE",
+        "MCQ_OPTIONS_INVALID",
+        "MCQ_OPTIONS_INVALID",
     ]
+
+
+def test_stage4_section_priority_and_no_section_fallbacks():
+    items = extract_ordered_questions(
+        "SECTION A\nMULTIPLE CHOICE QUESTIONS\n1. Which state has highest kinetic energy?\n"
+        "SHORT ANSWER QUESTIONS\n2. Explain graphite conduction.\n"
+        "LONG QUESTIONS\n3. Define allotropy.\n"
+        "SECTION B\n4. Explain electrolysis.\n"
+        "5. Carbon form?\nA. Graphite\nB. Diamond"
+    )
+    assert [item.answer_mode for item in items] == [
+        "mcq",
+        "short",
+        "long",
+        "short",
+        "mcq",
+    ]
+    assert items[0].mcq_options == ()
+    assert items[1].section_context == "SECTION A — SHORT ANSWER QUESTIONS"
+
+
+@pytest.mark.parametrize("labels", ["AB", "ABC", "ABCD", "ABCDE"])
+def test_stage4_dynamic_ordered_mcq_options(labels: str):
+    source = "1. Select.\n" + "\n".join(f"{label}. option {label}" for label in labels)
+    item = extract_ordered_questions(source)[0]
+    assert item.answer_mode == "mcq"
+    assert [option["label"] for option in item.mcq_options] == list(labels)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "1. Select.\nA. one\nC. three",
+        "1. Select.\nA. one\nB. two\nB. duplicate\nC. three",
+        "1. Select.\nA. \nB. two",
+    ],
+)
+def test_stage4_malformed_options_are_not_guessed(source: str):
+    item = extract_ordered_questions(source)[0]
+    assert item.answer_mode == "not_clear"
+    assert item.unclear_reason == "MCQ_OPTIONS_INVALID"

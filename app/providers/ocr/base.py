@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 class OCRProviderError(RuntimeError):
@@ -22,5 +22,21 @@ class OCRPage:
     source_kind: str
 
 
+@dataclass(frozen=True)
+class OCRExtractedQuestion:
+    """Untrusted structured content returned for one scanned page."""
+
+    display_label: str
+    section_context: str | None
+    question_text: str
+    answer_mode: Literal["short", "long", "mcq", "not_clear"]
+    mcq_options: tuple[dict[str, str], ...]
+    unclear_reason: str | None = None
+
+
 class OCRProvider(Protocol):
     async def extract_image_text(self, image_bytes: bytes) -> str: ...
+
+    async def extract_image_questions(
+        self, image_bytes: bytes, mime_type: str | None = None
+    ) -> tuple[OCRExtractedQuestion, ...]: ...
