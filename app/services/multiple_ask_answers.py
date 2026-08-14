@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
+from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -143,10 +144,34 @@ class MultipleAskAnswerService:
                     "MULTIPLE_ASK_ANSWERS_BLOCKED_BY_CORRECTION"
                 )
 
+        # MCQs are deliberately completed before, and completely outside, the
+        # written-answer path.  In particular, no bank, embeddings, retrieval,
+        # corpus, citation, or visual work is allowed to precede this batch.
+        mcq_items = [item for item in items if item["answer_mode"] == "mcq"]
+        pending_mcqs = [
+            item
+            for item in mcq_items
+            if item["item_status"] in {"ready_to_answer", "answering"}
+        ]
+        if pending_mcqs:
+            try:
+                await self._answer_mcq_batch(job, mcq_items, epoch)
+            except DeepSeekProviderError as exc:
+                if exc.retryable and exc.code.value != "bad_response":
+                    raise
+                await self._fail_mcq_batch(pending_mcqs, exc.code.value)
+            except (MultipleAskAnswerError, ValidationError) as exc:
+                await self._fail_mcq_batch(pending_mcqs, str(exc))
+
+        # Refresh status after MCQ materialization, then keep the existing
+        # durable small-batch behavior for written questions only.
+        async with self._conn.transaction():
+            items = await self._repo.lock_job_items(job_id=str(job["id"]))
         remaining = [
             item
             for item in items
-            if item["item_status"] in {"ready_to_answer", "answering"}
+            if item["answer_mode"] in {"short", "long"}
+            and item["item_status"] in {"ready_to_answer", "answering"}
         ]
         if not remaining:
             async with self._conn.transaction():
@@ -301,14 +326,9 @@ class MultipleAskAnswerService:
                     job["board_id"], job["class_id"], job["subject_id"]
                 )
 
-                if mode == AnswerMode.MCQ:
-                    await self._answer_single_mcq(
-                        job, item, request, evidence, active, policy
-                    )
-                else:
-                    await self._answer_single_short_or_long(
-                        job, item, request, mode, evidence, active, policy
-                    )
+                await self._answer_single_short_or_long(
+                    job, item, request, mode, evidence, active, policy
+                )
             except (
                 ValidationError,
                 AnswerValidationError,
@@ -518,116 +538,209 @@ class MultipleAskAnswerService:
                 approved_revision_id=None,
             )
 
-    async def _answer_single_mcq(
-        self,
-        job: dict[str, Any],
-        item: dict[str, Any],
-        request: dict[str, Any],
-        evidence: Any,
-        active: Any,
-        policy: dict[str, Any],
+    async def _answer_mcq_batch(
+        self, job: dict[str, Any], items: list[dict[str, Any]], epoch: int
     ) -> None:
-        source = AnswerSource.SYLLABUS_GROUNDED
-        citations: dict[str, CitationDto] = {}
-        if evidence.results:
-            results = evidence.results[:1]
-            if active:
-                request_context = SimpleNamespace(
+        """Generate every paper MCQ once, persist it, then materialize items."""
+        item_ids = [str(item["id"]) for item in items]
+        identity = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"multiple-ask-mcq:{job['id']}:{epoch}:{','.join(item_ids)}",
+            )
+        )
+        batch_identity = sha256(identity.encode("utf-8")).hexdigest()
+        batch = await self._repo.get_mcq_batch(
+            job_id=str(job["id"]), answer_epoch=epoch
+        )
+        if batch is None:
+            resolved = await self._ask._prompts.resolve_active(
+                prompt_key=PromptKey.ASK_GENERAL,
+                answer_mode=PromptAnswerMode.SHORT,
+                scope=PromptScope(
                     board_id=job["board_id"],
                     class_id=job["class_id"],
                     subject_id=job["subject_id"],
-                    answer_mode=AnswerMode.MCQ,
-                )
-                results = await self._ask._expand_answer_topics(
-                    request=request_context,
-                    corpus_version_id=str(active["id"]),
-                    ranked_results=evidence.results,
-                )
-            context = assemble_context(
-                results,
-                max_chunks=_MAX_COMPLETE_TOPIC_CHUNKS,
-                max_characters=12000,
+                ),
             )
-            citations = {
-                value.citation.citation_id: CitationDto(
-                    citation_id=value.citation.citation_id,
-                    chapter_id=value.citation.chapter_id,
-                    topic_no=value.citation.topic_no,
-                    topic_title=value.citation.topic_title,
-                    page_start=value.citation.page_start,
-                    page_end=value.citation.page_end,
-                )
-                for value in results
-            }
-            prompt_key = PromptKey.ASK_GROUNDED
-            payload: dict[str, Any] = {
-                "question": item["source_text"],
-                "answer_mode": "mcq",
-                "mcq_options": item["mcq_options"],
-                "answer_style": "exam_style",
-                "allow_general": bool(policy["allow_general"]),
-                "evidence": [asdict(value) for value in context],
-            }
-        elif policy["allow_general"]:
-            source = AnswerSource.GENERAL_KNOWLEDGE
-            prompt_key = PromptKey.ASK_GENERAL
             payload = {
-                "question": item["source_text"],
-                "answer_mode": "mcq",
-                "mcq_options": item["mcq_options"],
-                "answer_style": "exam_style",
+                "instructions": (
+                    "Use general knowledge only. Answer every supplied MCQ. "
+                    "Do not use textbook citations or visuals. Do not change item IDs "
+                    "or add/remove questions. With options select exactly one supplied "
+                    "label; without options return a direct answer. Give a very short "
+                    "explanation. Return JSON only: {results:[{item_id,selected_option,"
+                    "answer_text,explanation}]}."
+                ),
+                "items": [
+                    {
+                        "item_id": str(item["id"]),
+                        "question": item["source_text"],
+                        "options": item["mcq_options"],
+                    }
+                    for item in items
+                ],
             }
-        else:
-            raise MultipleAskAnswerError("GENERAL_AI_DISABLED", status_code=409)
-
-        resolved = await self._ask._prompts.resolve_active(
-            prompt_key=prompt_key,
-            answer_mode=PromptAnswerMode.MCQ,
-            scope=PromptScope(
-                board_id=job["board_id"],
-                class_id=job["class_id"],
-                subject_id=job["subject_id"],
-            ),
-        )
-        if self._ask._provider is None:
-            raise MultipleAskAnswerError("PROVIDER_UNAVAILABLE")
-        generated = await self._ask._provider.generate(
-            system_prompt=resolved.system_prompt,
-            user_prompt=json.dumps(payload, separators=(",", ":")),
-            ai_request_id=str(request["id"]),
-            trace_id=str(item["id"]),
-        )
-        blocks = _BLOCKS.validate_python(
-            _normalize_provider_block_aliases(generated.document.get("blocks"))
-        )
-        cited_ids = generated.document.get("cited_chunk_ids", [])
-        if not isinstance(cited_ids, list) or not all(
-            isinstance(value, str) for value in cited_ids
-        ):
-            cited_ids = []
-        answer = await self._asks.complete(
-            ai_request_id=str(request["id"]),
-            answer_source=source.value,
-            blocks=[block.model_dump() for block in blocks],
-            citations=[citation.model_dump() for citation in citations.values()]
-            if source == AnswerSource.SYLLABUS_GROUNDED
-            else [],
-            visual_ids=[],
-            prompt_version=f"{resolved.record.id}:{resolved.record.version}",
-            corpus_version_id=str(active["id"]) if active else None,
-            provider=generated.provider,
-            model=generated.model,
-            tokens_used=generated.usage.prompt_tokens
-            + generated.usage.completion_tokens,
-            latency_ms=generated.latency_ms,
-        )
-        async with self._conn.transaction():
-            await self._repo.complete_answer_item(
-                item_id=str(item["id"]),
-                ai_answer_id=str(answer["id"]),
-                answer_source=source.value,
-                approved_revision_id=None,
+            user_prompt = json.dumps(payload, separators=(",", ":"))
+            if (
+                len(resolved.system_prompt) + len(user_prompt)
+                > get_settings().DEEPSEEK_MAX_INPUT_CHARACTERS
+            ):
+                raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_BATCH_TOO_LARGE")
+            if self._ask._provider is None:
+                raise MultipleAskAnswerError("PROVIDER_UNAVAILABLE")
+            generated = await self._ask._provider.generate(
+                system_prompt=resolved.system_prompt,
+                user_prompt=user_prompt,
+                ai_request_id=identity,
+                trace_id=batch_identity,
             )
+            results = self._validate_mcq_results(generated.document, items)
+            async with self._conn.transaction():
+                batch = await self._repo.save_mcq_batch(
+                    job_id=str(job["id"]),
+                    answer_epoch=epoch,
+                    batch_identity=batch_identity,
+                    item_ids=item_ids,
+                    results=results,
+                    prompt_version=f"{resolved.record.id}:{resolved.record.version}",
+                    provider=generated.provider,
+                    model=generated.model,
+                    tokens_used=generated.usage.prompt_tokens
+                    + generated.usage.completion_tokens,
+                    latency_ms=generated.latency_ms,
+                )
+
+        results = batch["results"]
+        if isinstance(results, str):
+            results = json.loads(results)
+        result_by_id = {result["item_id"]: result for result in results}
+        for item in items:
+            if item.get("item_status") == "answered":
+                continue
+            result = result_by_id[str(item["id"])]
+            request = await self._candidate_request(job, item)
+            if await self._existing_completion(item, request, mcq_result=result):
+                continue
+            answer = await self._asks.complete(
+                ai_request_id=str(request["id"]),
+                answer_source=AnswerSource.GENERAL_KNOWLEDGE.value,
+                blocks=[
+                    {
+                        "type": "paragraph",
+                        "text": (
+                            f"Correct answer: {result['correct_answer_text']}\n\n"
+                            f"{result['explanation']}"
+                        ),
+                    }
+                ],
+                citations=[],
+                visual_ids=[],
+                prompt_version=str(batch["prompt_version"]),
+                corpus_version_id=None,
+                provider=str(batch["provider"]),
+                model=str(batch["model"]),
+                # Batch usage is durably recorded once on multiple_ask_mcq_batches.
+                tokens_used=0,
+                latency_ms=0,
+            )
+            async with self._conn.transaction():
+                await self._repo.complete_answer_item(
+                    item_id=str(item["id"]),
+                    ai_answer_id=str(answer["id"]),
+                    answer_source=AnswerSource.GENERAL_KNOWLEDGE.value,
+                    approved_revision_id=None,
+                    mcq_result=result,
+                )
+
+    @staticmethod
+    def _validate_mcq_results(
+        document: Any, items: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not isinstance(document, dict) or any(
+            key in document
+            for key in (
+                "citations",
+                "citation_sources",
+                "citation_ids",
+                "visuals",
+                "visual_ids",
+                "visual_id",
+                "cited_chunk_ids",
+            )
+        ):
+            raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_RESPONSE_INVALID")
+        results = document.get("results")
+        if not isinstance(results, list) or len(results) != len(items):
+            raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_RESULTS_MISMATCH")
+        item_by_id = {str(item["id"]): item for item in items}
+        validated: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for result in results:
+            if not isinstance(result, dict) or any(
+                key in result
+                for key in (
+                    "citations",
+                    "citation_sources",
+                    "citation_ids",
+                    "visuals",
+                    "visual_ids",
+                    "visual_id",
+                    "cited_chunk_ids",
+                )
+            ):
+                raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_RESULT_INVALID")
+            item_id = result.get("item_id")
+            if not isinstance(item_id, str) or item_id not in item_by_id:
+                raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_UNKNOWN_ITEM")
+            if item_id in seen:
+                raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_DUPLICATE_ITEM")
+            seen.add(item_id)
+            explanation = result.get("explanation")
+            if (
+                not isinstance(explanation, str)
+                or not explanation.strip()
+                or len(explanation.strip()) > 600
+            ):
+                raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_EXPLANATION_INVALID")
+            item = item_by_id[item_id]
+            options = item["mcq_options"]
+            if "selected_option" not in result:
+                raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_OPTION_INVALID")
+            selected = result.get("selected_option")
+            answer_text = result.get("answer_text")
+            if options:
+                labels = {option["label"]: option["text"] for option in options}
+                if not isinstance(selected, str) or selected not in labels:
+                    raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_OPTION_INVALID")
+                if answer_text is not None and not isinstance(answer_text, str):
+                    raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_RESULT_INVALID")
+                correct_answer_text = labels[selected]
+            else:
+                if (
+                    selected is not None
+                    or not isinstance(answer_text, str)
+                    or not answer_text.strip()
+                ):
+                    raise MultipleAskAnswerError(
+                        "MULTIPLE_ASK_MCQ_DIRECT_ANSWER_INVALID"
+                    )
+                correct_answer_text = answer_text.strip()
+            validated.append(
+                {
+                    "item_id": item_id,
+                    "selected_option": selected,
+                    "correct_answer_text": correct_answer_text,
+                    "explanation": explanation.strip(),
+                }
+            )
+        if seen != set(item_by_id):
+            raise MultipleAskAnswerError("MULTIPLE_ASK_MCQ_MISSING_ITEM")
+        return validated
+
+    async def _fail_mcq_batch(self, items: list[dict[str, Any]], code: str) -> None:
+        for item in items:
+            await self._fail_item(item, code)
 
     async def _candidate_request(
         self, job: dict[str, Any], item: dict[str, Any]
@@ -654,7 +767,11 @@ class MultipleAskAnswerService:
         return request
 
     async def _existing_completion(
-        self, item: dict[str, Any], request: dict[str, Any]
+        self,
+        item: dict[str, Any],
+        request: dict[str, Any],
+        *,
+        mcq_result: dict[str, Any] | None = None,
     ) -> bool:
         """Re-links existing completion if worker restarted after persisting answer."""
         existing_answer = await self._asks.answer_by_request_id(str(request["id"]))
@@ -666,6 +783,7 @@ class MultipleAskAnswerService:
                 ai_answer_id=str(existing_answer["id"]),
                 answer_source=str(existing_answer["answer_source"]),
                 approved_revision_id=None,
+                mcq_result=mcq_result,
             )
         return True
 

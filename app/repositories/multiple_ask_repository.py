@@ -352,17 +352,72 @@ class MultipleAskRepository:
         ai_answer_id: str,
         answer_source: str,
         approved_revision_id: str | None,
+        mcq_result: dict[str, Any] | None = None,
     ) -> None:
         await self._conn.execute(
             """UPDATE multiple_ask_job_items
                SET item_status='answered',ai_answer_id=$2::uuid,answer_source=$3,
-                   approved_revision_id=$4::uuid,terminal_error_code=NULL,updated_at=NOW()
+                   approved_revision_id=$4::uuid,mcq_result=$5::jsonb,
+                   terminal_error_code=NULL,updated_at=NOW()
                WHERE id=$1::uuid AND item_status IN ('ready_to_answer','answering')""",
             item_id,
             ai_answer_id,
             answer_source,
             approved_revision_id,
+            json.dumps(mcq_result) if mcq_result is not None else None,
         )
+
+    async def get_mcq_batch(
+        self, *, job_id: str, answer_epoch: int
+    ) -> dict[str, Any] | None:
+        row = await self._conn.fetchrow(
+            """SELECT * FROM multiple_ask_mcq_batches
+               WHERE multiple_ask_job_id=$1::uuid AND answer_epoch=$2""",
+            job_id,
+            answer_epoch,
+        )
+        return dict(row) if row else None
+
+    async def save_mcq_batch(
+        self,
+        *,
+        job_id: str,
+        answer_epoch: int,
+        batch_identity: str,
+        item_ids: list[str],
+        results: list[dict[str, Any]],
+        prompt_version: str,
+        provider: str,
+        model: str,
+        tokens_used: int,
+        latency_ms: int,
+    ) -> dict[str, Any]:
+        row = await self._conn.fetchrow(
+            """INSERT INTO multiple_ask_mcq_batches(
+                   multiple_ask_job_id,answer_epoch,batch_identity,item_ids,results,
+                   prompt_version,provider,model,tokens_used,latency_ms
+               ) VALUES($1::uuid,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10)
+               ON CONFLICT(multiple_ask_job_id,answer_epoch) DO NOTHING
+               RETURNING *""",
+            job_id,
+            answer_epoch,
+            batch_identity,
+            json.dumps(item_ids),
+            json.dumps(results),
+            prompt_version,
+            provider,
+            model,
+            tokens_used,
+            latency_ms,
+        )
+        if row is None:
+            existing = await self.get_mcq_batch(
+                job_id=job_id, answer_epoch=answer_epoch
+            )
+            if existing is None:
+                raise MultipleAskStateError("MULTIPLE_ASK_MCQ_BATCH_SAVE_FAILED")
+            return existing
+        return dict(row)
 
     async def fail_answer_item(self, *, item_id: str, error_code: str) -> None:
         await self._conn.execute(
@@ -414,7 +469,7 @@ class MultipleAskRepository:
             """SELECT i.id,i.item_index,i.display_label,i.section_context,i.item_status,i.normalized_question,i.answer_mode,i.mcq_options,
                       i.unclear_reason,i.source_locator,i.extraction_version,i.correction_version,i.corrected_at,
                       i.answer_source,i.terminal_error_code,i.approved_revision_id,
-                      a.answer_blocks,a.citation_sources,a.visual_ids,a.answer_source AS persisted_answer_source
+                      i.mcq_result,a.answer_blocks,a.citation_sources,a.visual_ids,a.answer_source AS persisted_answer_source
                FROM multiple_ask_job_items i
                LEFT JOIN ai_answers a ON a.id=i.ai_answer_id
                WHERE i.multiple_ask_job_id=$1::uuid

@@ -370,6 +370,7 @@ def _multiple_ask_status_response(record: dict[str, Any]) -> dict[str, Any]:
                             if item.get("approved_revision_id")
                             else None
                         ),
+                        "mcq_result": json_value(item.get("mcq_result"), None),
                     }
                     if item["item_status"] == "answered"
                     else None

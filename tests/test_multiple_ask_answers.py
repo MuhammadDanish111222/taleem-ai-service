@@ -25,6 +25,7 @@ def _item(index: int) -> dict:
         "source_text": f"Question {index}",
         "normalized_question": f"question {index}",
         "answer_mode": "mcq",
+        "item_status": "ready_to_answer",
         "mcq_options": [
             {"label": "A", "text": "one"},
             {"label": "B", "text": "two"},
@@ -205,16 +206,26 @@ async def test_short_answer_with_evidence_expands_topics_with_scope_fields():
 
 
 @pytest.mark.asyncio
-async def test_mcq_answer_with_options_passed_to_prompt():
+@pytest.mark.parametrize("count", [1, 5, 20])
+async def test_all_mcqs_use_one_general_short_deepseek_call(count: int):
     service = object.__new__(MultipleAskAnswerService)
     service._conn = _Connection()
     service._repo = SimpleNamespace(
-        mark_item_answering=AsyncMock(return_value=True),
+        get_mcq_batch=AsyncMock(return_value=None),
+        save_mcq_batch=AsyncMock(
+            side_effect=lambda **kwargs: {
+                "results": kwargs["results"],
+                "prompt_version": kwargs["prompt_version"],
+                "provider": kwargs["provider"],
+                "model": kwargs["model"],
+            }
+        ),
         complete_answer_item=AsyncMock(),
     )
     candidate_request = {"id": "req-mcq", "status": "pending"}
     service._asks = SimpleNamespace(complete=AsyncMock(return_value={"id": "ans-mcq"}))
-    service._fail_item = AsyncMock()
+    service._candidate_request = AsyncMock(return_value=candidate_request)
+    service._existing_completion = AsyncMock(return_value=False)
 
     prompt_service = SimpleNamespace(
         resolve_active=AsyncMock(
@@ -228,8 +239,15 @@ async def test_mcq_answer_with_options_passed_to_prompt():
         generate=AsyncMock(
             return_value=SimpleNamespace(
                 document={
-                    "blocks": [{"type": "paragraph", "text": "Correct answer is B."}],
-                    "cited_chunk_ids": [],
+                    "results": [
+                        {
+                            "item_id": _item(index)["id"],
+                            "selected_option": "B",
+                            "answer_text": None,
+                            "explanation": "B is correct.",
+                        }
+                        for index in range(1, count + 1)
+                    ]
                 },
                 provider="deepseek",
                 model="deepseek-chat",
@@ -250,20 +268,170 @@ async def test_mcq_answer_with_options_passed_to_prompt():
         "subject_id": "s1",
         "chapter_id": None,
     }
-    item = _item(1)
-    evidence = SimpleNamespace(results=[])
-    policy = {"allow_general": True, "semantic_reuse_enabled": False}
+    items = [_item(index) for index in range(1, count + 1)]
 
-    await service._answer_single_mcq(
-        job, item, candidate_request, evidence, None, policy
-    )
+    await service._answer_mcq_batch(job, items, epoch=1)
 
     assert provider.generate.await_count == 1
     sent_prompt = json.loads(provider.generate.await_args.kwargs["user_prompt"])
-    assert sent_prompt["answer_mode"] == "mcq"
-    assert sent_prompt["mcq_options"] == item["mcq_options"]
-    assert service._asks.complete.await_count == 1
-    assert service._repo.complete_answer_item.await_count == 1
+    assert sent_prompt["items"] == [
+        {
+            "item_id": item["id"],
+            "question": item["source_text"],
+            "options": item["mcq_options"],
+        }
+        for item in items
+    ]
+    assert (
+        prompt_service.resolve_active.await_args.kwargs["prompt_key"].value
+        == "ask_general"
+    )
+    assert (
+        prompt_service.resolve_active.await_args.kwargs["answer_mode"].value == "short"
+    )
+    assert service._asks.complete.await_count == count
+    assert service._repo.complete_answer_item.await_count == count
+
+
+@pytest.mark.parametrize("option_count", [2, 3, 4, 5])
+def test_mcq_result_accepts_actual_dynamic_option_labels(option_count: int):
+    item = _item(1)
+    item["mcq_options"] = [
+        {"label": chr(65 + index), "text": f"choice {index}"}
+        for index in range(option_count)
+    ]
+    result = MultipleAskAnswerService._validate_mcq_results(
+        {
+            "results": [
+                {
+                    "item_id": item["id"],
+                    "selected_option": chr(64 + option_count),
+                    "answer_text": None,
+                    "explanation": "Brief reason.",
+                }
+            ]
+        },
+        [item],
+    )
+    assert result[0]["correct_answer_text"] == f"choice {option_count - 1}"
+
+
+def test_mcq_result_rejects_invalid_option_and_accepts_zero_option_answer():
+    item = _item(1)
+    with pytest.raises(Exception, match="MULTIPLE_ASK_MCQ_OPTION_INVALID"):
+        MultipleAskAnswerService._validate_mcq_results(
+            {
+                "results": [
+                    {
+                        "item_id": item["id"],
+                        "selected_option": "Z",
+                        "answer_text": None,
+                        "explanation": "Brief reason.",
+                    }
+                ]
+            },
+            [item],
+        )
+    item["mcq_options"] = []
+    result = MultipleAskAnswerService._validate_mcq_results(
+        {
+            "results": [
+                {
+                    "item_id": item["id"],
+                    "selected_option": None,
+                    "answer_text": "Plasma",
+                    "explanation": "It is ionized matter.",
+                }
+            ]
+        },
+        [item],
+    )
+    assert result[0]["correct_answer_text"] == "Plasma"
+
+
+@pytest.mark.asyncio
+async def test_persisted_mcq_batch_resumes_without_a_provider_call():
+    service = object.__new__(MultipleAskAnswerService)
+    service._conn = _Connection()
+    item = _item(1)
+    persisted_result = {
+        "item_id": item["id"],
+        "selected_option": "B",
+        "correct_answer_text": "two",
+        "explanation": "B is correct.",
+    }
+    service._repo = SimpleNamespace(
+        get_mcq_batch=AsyncMock(
+            return_value={
+                "results": [persisted_result],
+                "prompt_version": "p:1",
+                "provider": "deepseek",
+                "model": "deepseek-chat",
+            }
+        ),
+        complete_answer_item=AsyncMock(),
+    )
+    provider = SimpleNamespace(generate=AsyncMock())
+    service._ask = SimpleNamespace(_provider=provider)
+    service._asks = SimpleNamespace(complete=AsyncMock(return_value={"id": "ans-1"}))
+    service._candidate_request = AsyncMock(return_value={"id": "req-1"})
+    service._existing_completion = AsyncMock(return_value=False)
+
+    await service._answer_mcq_batch(
+        {"id": "job-1", "board_id": "b", "class_id": "c", "subject_id": "s"},
+        [item],
+        epoch=1,
+    )
+
+    assert provider.generate.await_count == 0
+    assert (
+        service._repo.complete_answer_item.await_args.kwargs["mcq_result"]
+        == persisted_result
+    )
+
+
+@pytest.mark.parametrize(
+    "results,error",
+    [
+        ([], "MISMATCH"),
+        (
+            [{"item_id": "unknown", "selected_option": "A", "explanation": "x"}],
+            "UNKNOWN",
+        ),
+        (
+            [
+                {"item_id": _item(1)["id"], "selected_option": "A", "explanation": "x"},
+                {"item_id": _item(1)["id"], "selected_option": "A", "explanation": "x"},
+            ],
+            "MISMATCH",
+        ),
+        (
+            [{"item_id": _item(1)["id"], "selected_option": "A", "explanation": " "}],
+            "EXPLANATION",
+        ),
+    ],
+)
+def test_mcq_result_validation_rejects_malformed_results(results, error):
+    with pytest.raises(Exception, match=f"MULTIPLE_ASK_MCQ_.*{error}"):
+        MultipleAskAnswerService._validate_mcq_results({"results": results}, [_item(1)])
+
+
+def test_mcq_result_validation_rejects_duplicate_and_provider_artifacts():
+    first, second = _item(1), _item(2)
+    duplicate = {
+        "item_id": first["id"],
+        "selected_option": "A",
+        "answer_text": None,
+        "explanation": "Brief.",
+    }
+    with pytest.raises(Exception, match="MULTIPLE_ASK_MCQ_DUPLICATE_ITEM"):
+        MultipleAskAnswerService._validate_mcq_results(
+            {"results": [duplicate, duplicate]}, [first, second]
+        )
+    with pytest.raises(Exception, match="MULTIPLE_ASK_MCQ_RESPONSE_INVALID"):
+        MultipleAskAnswerService._validate_mcq_results(
+            {"results": [duplicate], "citations": []}, [first]
+        )
 
 
 @pytest.mark.asyncio
