@@ -81,6 +81,44 @@ class ApprovedQuestionInput(StrictModel):
 DEFAULT_IMPORT_MARKS: dict[str, float] = {"mcq": 1, "short": 2, "long": 4}
 
 
+class BlueprintSectionInput(StrictModel):
+    key: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+    title: str = Field(min_length=1, max_length=160)
+    type: Literal["mcq", "short", "long"]
+    select_count: int = Field(ge=1, le=100)
+    attempt_count: int = Field(ge=1, le=100)
+    marks_each: float = Field(gt=0, le=1000)
+    difficulty_distribution: dict[Literal["easy", "medium", "hard"], int] = Field(default_factory=dict)
+    chapter_distribution: dict[str, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_quotas(self):
+        if self.attempt_count > self.select_count:
+            raise ValueError("BLUEPRINT_ATTEMPT_COUNT_INVALID")
+        for chapter_id, count in self.chapter_distribution.items():
+            if not chapter_id or len(chapter_id) > 120 or count < 1:
+                raise ValueError("BLUEPRINT_CHAPTER_INVALID")
+        if any(count < 1 for count in self.difficulty_distribution.values()):
+            raise ValueError("BLUEPRINT_DIFFICULTY_INVALID")
+        if self.difficulty_distribution and sum(self.difficulty_distribution.values()) != self.select_count:
+            raise ValueError("BLUEPRINT_DIFFICULTY_TOTAL_INVALID")
+        if self.chapter_distribution and sum(self.chapter_distribution.values()) != self.select_count:
+            raise ValueError("BLUEPRINT_CHAPTER_TOTAL_INVALID")
+        return self
+
+
+class BoardPaperBlueprintInput(StrictModel):
+    duration_minutes: int = Field(ge=1, le=600)
+    sections: list[BlueprintSectionInput] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_section_keys(self):
+        keys = [section.key for section in self.sections]
+        if len(keys) != len(set(keys)):
+            raise ValueError("BLUEPRINT_SECTION_KEY_DUPLICATE")
+        return self
+
+
 class BulkImportQuestionInput(StrictModel):
     """Human-friendly local-admin JSON input, normalized into the bank contract."""
 
@@ -214,6 +252,9 @@ class AskAdminRequest(StrictModel):
         "bank_set_visuals",
         "source_policy_get",
         "source_policy_set_semantic_threshold",
+        "blueprint_get",
+        "blueprint_preview",
+        "blueprint_save",
     ]
     prompt_id: UUID | None = None
     prompt_key: Literal["ask_grounded", "ask_general"] | None = None
@@ -246,6 +287,10 @@ class AskAdminRequest(StrictModel):
     import_questions: list[BulkImportQuestionInput] = Field(
         default_factory=list, max_length=500
     )
+    blueprint_name: str | None = Field(default=None, min_length=1, max_length=160)
+    blueprint: BoardPaperBlueprintInput | None = None
+    blueprint_active: bool | None = None
+    selection_seed: str | None = Field(default=None, min_length=1, max_length=200)
     limit: int = Field(default=50, ge=1, le=100)
 
     @model_validator(mode="after")
@@ -285,4 +330,18 @@ class AskAdminRequest(StrictModel):
             return self
         if not all((self.board_id, self.class_id, self.subject_id, self.chapter_id)):
             raise ValueError("IMPORT_SCOPE_REQUIRES_BOARD_CLASS_SUBJECT_CHAPTER")
+        return self
+
+    @model_validator(mode="after")
+    def validate_blueprint_request(self):
+        if self.operation not in {"blueprint_get", "blueprint_preview", "blueprint_save"}:
+            return self
+        if not all((self.board_id, self.class_id, self.subject_id)):
+            raise ValueError("BLUEPRINT_SCOPE_REQUIRED")
+        if self.operation in {"blueprint_preview", "blueprint_save"} and self.blueprint is None:
+            raise ValueError("BLUEPRINT_REQUIRED")
+        if self.operation == "blueprint_save" and (
+            self.blueprint_name is None or self.blueprint_active is None
+        ):
+            raise ValueError("BLUEPRINT_SAVE_FIELDS_REQUIRED")
         return self

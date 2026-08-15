@@ -334,6 +334,101 @@ async def ask_admin(
                     ),
                 }
 
+            if request.operation == "blueprint_get":
+                row = await conn.fetchrow(
+                    """SELECT id::text,name,config,is_active,created_at,updated_at
+                       FROM board_paper_blueprints
+                       WHERE board_id=$1 AND class_id=$2 AND subject_id=$3""",
+                    request.board_id,
+                    request.class_id,
+                    request.subject_id,
+                )
+                if row is None:
+                    return {"blueprint": None}
+                config = row["config"]
+                return {
+                    "blueprint": {
+                        "id": row["id"],
+                        "name": row["name"],
+                        "config": json.loads(config) if isinstance(config, str) else config,
+                        "is_active": bool(row["is_active"]),
+                        "created_at": row["created_at"].isoformat(),
+                        "updated_at": row["updated_at"].isoformat(),
+                    }
+                }
+
+            if request.operation in {"blueprint_preview", "blueprint_save"}:
+                blueprint = _required(request.blueprint, "BLUEPRINT_REQUIRED")
+                config = blueprint.model_dump(mode="json")
+                seed = request.selection_seed or "blueprint-preview"
+                outcome = await conn.fetchval(
+                    "SELECT taleem_select_questions($1,$2,$3,$4::jsonb,$5)",
+                    request.board_id,
+                    request.class_id,
+                    request.subject_id,
+                    json.dumps(config),
+                    seed,
+                )
+                outcome = json.loads(outcome) if isinstance(outcome, str) else outcome
+                if request.operation == "blueprint_preview":
+                    return outcome
+                if request.blueprint_active and not outcome.get("satisfiable"):
+                    raise ValueError("BLUEPRINT_ACTIVATION_UNSATISFIED")
+                async with conn.transaction():
+                    before = await conn.fetchrow(
+                        """SELECT id::text,name,config,is_active
+                           FROM board_paper_blueprints
+                           WHERE board_id=$1 AND class_id=$2 AND subject_id=$3
+                           FOR UPDATE""",
+                        request.board_id,
+                        request.class_id,
+                        request.subject_id,
+                    )
+                    row = await conn.fetchrow(
+                        """INSERT INTO board_paper_blueprints(
+                             board_id,class_id,subject_id,name,config,is_active,created_by,updated_by
+                           ) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$7)
+                           ON CONFLICT (board_id,class_id,subject_id) DO UPDATE
+                             SET name=EXCLUDED.name,config=EXCLUDED.config,
+                                 is_active=EXCLUDED.is_active,updated_by=EXCLUDED.updated_by
+                           RETURNING id::text,name,config,is_active,updated_at""",
+                        request.board_id,
+                        request.class_id,
+                        request.subject_id,
+                        request.blueprint_name,
+                        json.dumps(config),
+                        request.blueprint_active,
+                        auth.uid,
+                    )
+                    await AuditRepository(conn).create_audit_log(
+                        actor_id=auth.uid,
+                        action="blueprint.saved",
+                        target_type="board_paper_blueprint",
+                        target_id=row["id"],
+                        before_value=(
+                            {
+                                "name": before["name"],
+                                "is_active": bool(before["is_active"]),
+                            }
+                            if before else None
+                        ),
+                        after_value={
+                            "name": row["name"],
+                            "is_active": bool(row["is_active"]),
+                            "total_marks": outcome["total_marks"],
+                        },
+                    )
+                return {
+                    "blueprint": {
+                        "id": row["id"],
+                        "name": row["name"],
+                        "config": json.loads(row["config"]) if isinstance(row["config"], str) else row["config"],
+                        "is_active": bool(row["is_active"]),
+                        "updated_at": row["updated_at"].isoformat(),
+                    },
+                    "coverage": outcome,
+                }
+
             asks = AskRepository(conn)
             bank = QuestionBankRepository(conn)
             if request.operation == "candidate_list":

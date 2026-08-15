@@ -52,6 +52,8 @@ async def test_migrations_execution_and_idempotency():
         assert "0013_module5_run2_paper_formats_and_refunds.sql" in versions
         assert "0014_module5_run3_durable_answers.sql" in versions
         assert "0015_module5_stage5_mcq_batches.sql" in versions
+        assert "0016_voyage_halfvec_512.sql" in versions
+        assert "0017_module6_blueprints.sql" in versions
     finally:
         await connection.close()
 
@@ -205,6 +207,7 @@ ALL_TABLES = [
     "multiple_ask_cleanup_audit",
     "multiple_ask_normalized_sources",
     "multiple_ask_mcq_batches",
+    "board_paper_blueprints",
 ]
 
 
