@@ -609,7 +609,9 @@ async def test_strong_retrieval_persists_pending_grounded_candidate(conn):
 
 
 @pytest.mark.asyncio
-async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
+async def test_long_answer_expands_complete_topic_and_returns_only_llm_selected_visuals(
+    conn,
+):
     suffix = uuid.uuid4().hex
     configuration = VoyageEmbeddingConfiguration()
     rag = RagRepository(conn)
@@ -740,6 +742,7 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
                     "type": "paragraph",
                     "text": "Intermediate states include supercritical fluids, liquid crystals and graphene.",
                 },
+                {"type": "visual_ref", "visual_id": "Visual_3"},
             ],
             "cited_chunk_ids": [str(chunk["id"]) for chunk in chunks],
         }
@@ -757,11 +760,8 @@ async def test_long_answer_expands_complete_topic_and_returns_all_visuals(conn):
     sent = json.loads(provider.last_call["user_prompt"])
     assert len(sent["evidence"]) == 3
     assert "supercritical fluids" in sent["evidence"][2]["content"]
-    assert [item.visual_id for item in result.visuals] == ["Visual_1", "Visual_3"]
-    assert [block.type for block in result.blocks][-2:] == [
-        "visual_ref",
-        "visual_ref",
-    ]
+    assert [item.visual_id for item in result.visuals] == ["Visual_3"]
+    assert result.blocks[-1].visual_id == "Visual_3"
 
 
 @pytest.mark.asyncio
