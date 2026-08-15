@@ -489,8 +489,17 @@ async def ask_admin(
                 import_key = _required(request.import_key, "IMPORT_KEY_REQUIRED")
                 if not request.import_questions:
                     raise ValueError("IMPORT_QUESTIONS_REQUIRED")
+                import_questions = [
+                    item.as_approved_question(
+                        board_id=_required(request.board_id, "IMPORT_BOARD_REQUIRED"),
+                        class_id=_required(request.class_id, "IMPORT_CLASS_REQUIRED"),
+                        subject_id=_required(request.subject_id, "IMPORT_SUBJECT_REQUIRED"),
+                        chapter_id=_required(request.chapter_id, "IMPORT_CHAPTER_REQUIRED"),
+                    )
+                    for item in request.import_questions
+                ]
                 payload = json.dumps(
-                    [item.model_dump(mode="json") for item in request.import_questions],
+                    [item.model_dump(mode="json") for item in import_questions],
                     sort_keys=True,
                     separators=(",", ":"),
                 )
@@ -514,8 +523,27 @@ async def ask_admin(
                                 str(item) for item in existing["revision_ids"]
                             ],
                         }
+                    # Confirm every external visual reference before creating
+                    # any bank rows.  The enclosing transaction also protects
+                    # against a later database failure.
+                    for index, item in enumerate(import_questions, start=1):
+                        try:
+                            await _visual_row_ids(
+                                conn,
+                                item.visual_ids,
+                                board_id=item.board_id,
+                                class_id=item.class_id,
+                                subject_id=item.subject_id,
+                                chapter_id=item.chapter_id,
+                            )
+                        except ValueError as exc:
+                            # This code is deliberately safe for the local BFF
+                            # to surface; it contains no source metadata.
+                            raise ValueError(
+                                f"IMPORT_QUESTION_{index}_{exc}"
+                            ) from None
                     revision_ids = []
-                    for item in request.import_questions:
+                    for item in import_questions:
                         revision_id = await _create_approved(
                             conn,
                             bank,

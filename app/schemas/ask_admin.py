@@ -78,6 +78,116 @@ class ApprovedQuestionInput(StrictModel):
         return self
 
 
+DEFAULT_IMPORT_MARKS: dict[str, float] = {"mcq": 1, "short": 2, "long": 4}
+
+
+class BulkImportQuestionInput(StrictModel):
+    """Human-friendly local-admin JSON input, normalized into the bank contract."""
+
+    question: str = Field(min_length=1, max_length=4000)
+    type: Literal["mcq", "short", "long"]
+    difficulty: Literal["easy", "medium", "hard"]
+    marks: float | None = Field(default=None, gt=0, le=1000)
+    options: list[str] = Field(default_factory=list, max_length=12)
+    correct_answer: str | None = Field(default=None, max_length=1000)
+    answer_blocks: list[AnswerBlock] = Field(default_factory=list, max_length=120)
+    visual_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @property
+    def resolved_marks(self) -> float:
+        return self.marks if self.marks is not None else DEFAULT_IMPORT_MARKS[self.type]
+
+    @model_validator(mode="after")
+    def validate_question(self):
+        if len(self.visual_ids) != len(set(self.visual_ids)):
+            raise ValueError("VISUAL_LINK_DUPLICATE")
+        visual_refs = [
+            item.visual_id
+            for item in self.answer_blocks
+            if isinstance(item, VisualRefBlock)
+        ]
+        if len(visual_refs) != len(set(visual_refs)):
+            raise ValueError("VISUAL_BLOCK_DUPLICATE")
+        if set(visual_refs) - set(self.visual_ids):
+            raise ValueError("VISUAL_BLOCK_LINK_MISMATCH")
+        if any(
+            isinstance(item, EquationBlock)
+            and any(
+                command in item.latex.lower()
+                for command in (
+                    "\\input",
+                    "\\include",
+                    "\\write18",
+                    "\\openout",
+                    "\\usepackage",
+                    "\\href",
+                    "\\url",
+                )
+            )
+            for item in self.answer_blocks
+        ):
+            raise ValueError("ANSWER_EQUATION_UNSAFE")
+
+        if self.type == "mcq":
+            if len(self.options) < 2 or any(not item.strip() for item in self.options):
+                raise ValueError("MCQ_OPTIONS_REQUIRED")
+            if len(set(self.options)) != len(self.options):
+                raise ValueError("MCQ_OPTIONS_DUPLICATE")
+            if self.correct_answer is None or self.correct_answer not in self.options:
+                raise ValueError("MCQ_CORRECT_ANSWER_INVALID")
+        else:
+            if not self.answer_blocks:
+                raise ValueError("ANSWER_BLOCKS_REQUIRED")
+            if self.options or self.correct_answer is not None:
+                raise ValueError("MCQ_FIELDS_FORBIDDEN")
+        return self
+
+    def as_approved_question(
+        self,
+        *,
+        board_id: str,
+        class_id: str,
+        subject_id: str,
+        chapter_id: str,
+    ) -> ApprovedQuestionInput:
+        blocks = [item.model_dump() for item in self.answer_blocks]
+        block_visual_ids = {
+            item["visual_id"] for item in blocks if item["type"] == "visual_ref"
+        }
+        # The answer renderer uses visual_ref blocks.  Keep JSON concise by
+        # adding canonical references for any selected existing visuals.
+        blocks.extend(
+            {"type": "visual_ref", "visual_id": visual_id}
+            for visual_id in self.visual_ids
+            if visual_id not in block_visual_ids
+        )
+        if self.type == "mcq" and not blocks:
+            # MCQs retain their correct answer in the same block format used by
+            # existing renderer/reuse code; choices live in the MCQ table.
+            blocks = [{"type": "paragraph", "text": self.correct_answer}]
+        return ApprovedQuestionInput(
+            board_id=board_id,
+            class_id=class_id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
+            answer_mode=AnswerMode(self.type),
+            answer_style=AnswerStyle.EXAM_STYLE,
+            difficulty=self.difficulty,
+            marks=self.resolved_marks,
+            question=self.question,
+            blocks=blocks,
+            mcq_options=[
+                McqOptionInput(
+                    key=str(index + 1),
+                    text=option,
+                    is_correct=option == self.correct_answer,
+                )
+                for index, option in enumerate(self.options)
+            ],
+            visual_ids=self.visual_ids,
+        )
+
+
 class AskAdminRequest(StrictModel):
     operation: Literal[
         "prompt_history",
@@ -133,7 +243,7 @@ class AskAdminRequest(StrictModel):
     visual_ids: list[str] = Field(default_factory=list, max_length=20)
     approved_question: ApprovedQuestionInput | None = None
     import_key: str | None = Field(default=None, max_length=200)
-    import_questions: list[ApprovedQuestionInput] = Field(
+    import_questions: list[BulkImportQuestionInput] = Field(
         default_factory=list, max_length=500
     )
     limit: int = Field(default=50, ge=1, le=100)
@@ -167,4 +277,14 @@ class AskAdminRequest(StrictModel):
             self.semantic_similarity_threshold is None
         ):
             raise ValueError("SEMANTIC_THRESHOLD_REQUIRED")
+        return self
+
+    @model_validator(mode="after")
+    def validate_bank_import_scope(self):
+        if self.operation != "bank_import":
+            return self
+        if not all(
+            (self.board_id, self.class_id, self.subject_id, self.chapter_id)
+        ):
+            raise ValueError("IMPORT_SCOPE_REQUIRES_BOARD_CLASS_SUBJECT_CHAPTER")
         return self
