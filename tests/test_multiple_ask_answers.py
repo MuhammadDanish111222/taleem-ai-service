@@ -302,6 +302,102 @@ async def test_all_mcqs_use_one_general_short_deepseek_call(count: int):
     assert service._repo.complete_answer_item.await_count == count
 
 
+@pytest.mark.asyncio
+async def test_mixed_paper_batches_mcqs_once_then_answers_written_items_in_paper_order(
+    monkeypatch,
+):
+    """The MCQ-only path must remain isolated when a paper also has written items."""
+    service = object.__new__(MultipleAskAnswerService)
+    service._conn = _Connection()
+    mcq_one, mcq_two, short_item, long_item = (
+        _item(1),
+        _item(2),
+        _item(3),
+        _item(4),
+    )
+    short_item.update(
+        answer_mode="short",
+        source_text="Define velocity.",
+        normalized_question="define velocity",
+    )
+    long_item.update(
+        answer_mode="long",
+        source_text="Explain acceleration.",
+        normalized_question="explain acceleration",
+    )
+    refreshed = [
+        {**mcq_one, "item_status": "answered"},
+        {**mcq_two, "item_status": "answered"},
+        short_item,
+        long_item,
+    ]
+    job = {
+        "id": "job-1",
+        "workflow_status": "answering",
+        "answer_epoch": 1,
+        "board_id": "b1",
+        "class_id": "c1",
+        "subject_id": "s1",
+        "chapter_id": None,
+    }
+    service._repo = SimpleNamespace(
+        lock_answer_context=AsyncMock(return_value=job),
+        lock_job_items=AsyncMock(
+            side_effect=[[mcq_one, mcq_two, short_item, long_item], refreshed]
+        ),
+        mark_item_answering=AsyncMock(return_value=True),
+        finish_answers=AsyncMock(return_value="completed"),
+    )
+    service._answer_mcq_batch = AsyncMock()
+    service._candidate_request = AsyncMock(
+        side_effect=[{"id": "req-short"}, {"id": "req-long"}]
+    )
+    service._existing_completion = AsyncMock(return_value=False)
+    service._answer_single_short_or_long = AsyncMock()
+    service._ask = SimpleNamespace(
+        find_approved_without_embedding=AsyncMock(return_value=(None, None)),
+        _source_policy=AsyncMock(return_value={"semantic_reuse_enabled": False}),
+        _retrieval=SimpleNamespace(
+            retrieve=AsyncMock(return_value=SimpleNamespace(results=[]))
+        ),
+    )
+
+    class _NoActiveCorpus:
+        def __init__(self, _conn):
+            pass
+
+        async def get_active_corpus_version(self, *_args):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.multiple_ask_answers.RagRepository", _NoActiveCorpus
+    )
+    monkeypatch.setattr(
+        "app.services.multiple_ask_answers.get_settings",
+        lambda: SimpleNamespace(MULTIPLE_ASK_ANSWER_BATCH_SIZE=2),
+    )
+
+    assert await service.answer(session_id="session-1", epoch=1) == "completed"
+    assert service._answer_mcq_batch.await_count == 1
+    assert [item["id"] for item in service._answer_mcq_batch.await_args.args[1]] == [
+        mcq_one["id"],
+        mcq_two["id"],
+    ]
+    assert [
+        call.args[1]["id"]
+        for call in service._answer_single_short_or_long.await_args_list
+    ] == [
+        short_item["id"],
+        long_item["id"],
+    ]
+    assert [
+        call.args[0] for call in service._ask._retrieval.retrieve.await_args_list
+    ] == [
+        short_item["source_text"],
+        long_item["source_text"],
+    ]
+
+
 @pytest.mark.parametrize("option_count", [2, 3, 4, 5])
 def test_mcq_result_accepts_actual_dynamic_option_labels(option_count: int):
     item = _item(1)

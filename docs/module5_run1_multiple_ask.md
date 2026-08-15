@@ -33,3 +33,19 @@ Business workflow states are separate from `job_queue.status`: `queued`, `valida
 Railway-public owns `multiple_ask_validate` and future user-input OCR/extraction/answer job types only; it never owns local-admin ingestion or bulk embeddings.
 
 The Railway-owned worker runs bounded Multiple Ask cleanup every five minutes. Cleanup failures are logged and retried on the next interval without stopping durable job processing.
+
+## Current solved-paper flow (Stages 5–6)
+
+After extraction and any correction, all MCQs in a paper are answered by exactly one structured DeepSeek batch call. That path never consults the approved bank, Voyage, retrieval, RAG prompts, citations, or visuals. It supports ordered dynamic options and zero-option direct answers; its validated batch result is persisted before item answers are materialized, so a restart does not make a second provider call.
+
+Short and long items remain separate written-answer work: approved exact/variation/lexical/semantic reuse first, then strong scoped textbook evidence with the matching RAG prompt, otherwise an explicit General prompt. Short answers select at most one topic and long answers at most two. General and MCQ answers have no textbook citations or visuals. RAG visuals are restricted to selected topic candidates; approved answers may use only their explicitly linked visuals.
+
+Status returns the actual or corrected `question_text`, original paper order, label, section context, mode, options, structured MCQ result, safe provenance, blocks, topic names, and safe visual metadata. It does not return raw uploaded sources, storage keys, provider payloads, embeddings, or internal tokens.
+
+## Manual staging release checklist
+
+1. Log in; verify Single Ask Short and Long, including approved reuse and weak RAG as **Not from book**.
+2. Submit pasted text, a text PDF, a scanned PDF, and an image; confirm extraction, correction, and resume work.
+3. Submit one mixed paper (about 5 MCQ, 5 Short, 2 Long); verify original order, labels, dynamic and zero-option MCQs, concise Short answers, complete Long answers, and no debug RAG references.
+4. Verify one book-grounded visual is relevant and topic-scoped; General and MCQ answers show none.
+5. Refresh during processing; verify no duplicate answers or quota use. Check `/health`, `/ready`, logout, and that student responses expose no private source data.
