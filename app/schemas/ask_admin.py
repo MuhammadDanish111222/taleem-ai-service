@@ -283,8 +283,6 @@ class AskAdminRequest(StrictModel):
     def validate_bank_import_scope(self):
         if self.operation != "bank_import":
             return self
-        if not all(
-            (self.board_id, self.class_id, self.subject_id, self.chapter_id)
-        ):
+        if not all((self.board_id, self.class_id, self.subject_id, self.chapter_id)):
             raise ValueError("IMPORT_SCOPE_REQUIRES_BOARD_CLASS_SUBJECT_CHAPTER")
         return self

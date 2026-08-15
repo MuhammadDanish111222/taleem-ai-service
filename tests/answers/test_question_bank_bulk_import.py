@@ -36,17 +36,29 @@ def test_bulk_import_defaults_marks_and_applies_selected_scope():
     assert explicit.resolved_marks == 6
 
     normalized = short.as_approved_question(
-        board_id="punjab", class_id="class-9", subject_id="chemistry", chapter_id="atoms"
+        board_id="punjab",
+        class_id="class-9",
+        subject_id="chemistry",
+        chapter_id="atoms",
     )
-    assert (normalized.board_id, normalized.class_id, normalized.subject_id, normalized.chapter_id) == (
-        "punjab", "class-9", "chemistry", "atoms"
-    )
+    assert (
+        normalized.board_id,
+        normalized.class_id,
+        normalized.subject_id,
+        normalized.chapter_id,
+    ) == ("punjab", "class-9", "chemistry", "atoms")
     assert normalized.blocks[0].type == "paragraph"
 
 
 def test_bulk_import_rejects_invalid_item_and_incomplete_scope_before_any_insert():
     valid = _question()
-    invalid = _question(question="Broken MCQ", type="mcq", options=["A", "B"], correct_answer="C", answer_blocks=[])
+    invalid = _question(
+        question="Broken MCQ",
+        type="mcq",
+        options=["A", "B"],
+        correct_answer="C",
+        answer_blocks=[],
+    )
     with pytest.raises(ValidationError, match="MCQ_CORRECT_ANSWER_INVALID"):
         AskAdminRequest(
             operation="bank_import",
@@ -57,7 +69,9 @@ def test_bulk_import_rejects_invalid_item_and_incomplete_scope_before_any_insert
             import_key="batch-1",
             import_questions=[valid, invalid],
         )
-    with pytest.raises(ValidationError, match="IMPORT_SCOPE_REQUIRES_BOARD_CLASS_SUBJECT_CHAPTER"):
+    with pytest.raises(
+        ValidationError, match="IMPORT_SCOPE_REQUIRES_BOARD_CLASS_SUBJECT_CHAPTER"
+    ):
         AskAdminRequest(
             operation="bank_import",
             board_id="punjab",
@@ -95,12 +109,16 @@ def test_bulk_import_normalizes_mcq_and_visuals_to_existing_bank_contract():
             visual_ids=["atom-diagram"],
         )
     ).as_approved_question(
-        board_id="punjab", class_id="class-9", subject_id="chemistry", chapter_id="atoms"
+        board_id="punjab",
+        class_id="class-9",
+        subject_id="chemistry",
+        chapter_id="atoms",
     )
-    assert [(option.key, option.text, option.is_correct) for option in value.mcq_options] == [
+    assert [
+        (option.key, option.text, option.is_correct) for option in value.mcq_options
+    ] == [
         ("1", "Proton", False),
         ("2", "Electron", True),
     ]
     assert [block.type for block in value.blocks] == ["visual_ref"]
     assert value.visual_ids == ["atom-diagram"]
-

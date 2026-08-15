@@ -493,8 +493,12 @@ async def ask_admin(
                     item.as_approved_question(
                         board_id=_required(request.board_id, "IMPORT_BOARD_REQUIRED"),
                         class_id=_required(request.class_id, "IMPORT_CLASS_REQUIRED"),
-                        subject_id=_required(request.subject_id, "IMPORT_SUBJECT_REQUIRED"),
-                        chapter_id=_required(request.chapter_id, "IMPORT_CHAPTER_REQUIRED"),
+                        subject_id=_required(
+                            request.subject_id, "IMPORT_SUBJECT_REQUIRED"
+                        ),
+                        chapter_id=_required(
+                            request.chapter_id, "IMPORT_CHAPTER_REQUIRED"
+                        ),
                     )
                     for item in request.import_questions
                 ]
@@ -539,9 +543,7 @@ async def ask_admin(
                         except ValueError as exc:
                             # This code is deliberately safe for the local BFF
                             # to surface; it contains no source metadata.
-                            raise ValueError(
-                                f"IMPORT_QUESTION_{index}_{exc}"
-                            ) from None
+                            raise ValueError(f"IMPORT_QUESTION_{index}_{exc}") from None
                     revision_ids = []
                     for item in import_questions:
                         revision_id = await _create_approved(
