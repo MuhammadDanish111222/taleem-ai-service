@@ -307,7 +307,6 @@ class AskRepository:
                  JOIN rag_visuals v ON v.chunk_id=c.id AND v.visual_id=$3
                  WHERE s.approved_revision_id IS NULL
                    AND v.review_status='approved'
-                   AND v.display_policy IN ('always','llm_decide')
                  UNION ALL
                  SELECT v.storage_provider,v.storage_key
                  FROM selected_answer s
@@ -315,7 +314,6 @@ class AskRepository:
                    ON l.revision_id=s.approved_revision_id
                  JOIN rag_visuals v ON v.id=l.visual_id AND v.visual_id=$3
                  WHERE v.review_status='approved'
-                   AND v.display_policy IN ('always','llm_decide')
                )
                SELECT storage_provider,storage_key FROM eligible LIMIT 2""",
             client_request_id,
@@ -404,7 +402,6 @@ class AskRepository:
                  WHERE s.approved_revision_id IS NULL
                    AND v.visual_id=ANY($2::text[])
                    AND v.review_status='approved'
-                   AND v.display_policy IN ('always','llm_decide')
                  UNION ALL
                  SELECT v.id,v.visual_id,v.title,v.description,v.display_policy
                  FROM selected_answer s
@@ -413,7 +410,6 @@ class AskRepository:
                  JOIN rag_visuals v ON v.id=l.visual_id
                  WHERE v.visual_id=ANY($2::text[])
                    AND v.review_status='approved'
-                   AND v.display_policy IN ('always','llm_decide')
                )
                SELECT visual_id,title,description,display_policy
                FROM eligible ORDER BY visual_id,id""",

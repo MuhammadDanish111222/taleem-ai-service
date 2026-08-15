@@ -8,6 +8,8 @@ from typing import Any
 
 import asyncpg
 
+from app.repositories.ask_repository import AskRepository
+
 
 class MultipleAskStateError(ValueError):
     pass
@@ -466,9 +468,9 @@ class MultipleAskRepository:
         if job is None:
             return None
         items = await self._conn.fetch(
-            """SELECT i.id,i.item_index,i.display_label,i.section_context,i.item_status,i.normalized_question,i.answer_mode,i.mcq_options,
+            """SELECT i.id,i.item_index,i.display_label,i.section_context,i.source_text,i.item_status,i.normalized_question,i.answer_mode,i.mcq_options,
                       i.unclear_reason,i.source_locator,i.extraction_version,i.correction_version,i.corrected_at,
-                      i.answer_source,i.terminal_error_code,i.approved_revision_id,
+                      i.ai_request_id,i.answer_source,i.terminal_error_code,i.approved_revision_id,
                       i.mcq_result,a.answer_blocks,a.citation_sources,a.visual_ids,a.answer_source AS persisted_answer_source
                FROM multiple_ask_job_items i
                LEFT JOIN ai_answers a ON a.id=i.ai_answer_id
@@ -476,8 +478,22 @@ class MultipleAskRepository:
                ORDER BY i.item_index""",
             job_id,
         )
+        answer_repository = AskRepository(self._conn)
         result = dict(job)
-        result["items"] = [dict(item) for item in items]
+        result["items"] = []
+        for row in items:
+            item = dict(row)
+            visual_ids = item.get("visual_ids") or []
+            if isinstance(visual_ids, str):
+                visual_ids = json.loads(visual_ids)
+            item["visuals"] = (
+                await answer_repository.visual_metadata_for_completed_request(
+                    ai_request_id=str(item["ai_request_id"]), visual_ids=visual_ids
+                )
+                if item.get("ai_request_id") and visual_ids
+                else []
+            )
+            result["items"].append(item)
         return result
 
     async def lock_owned_job(

@@ -512,9 +512,6 @@ class MultipleAskAnswerService:
             citation_ids=cited_ids,
             allowed_citations=citations,
             allowed_visuals=visuals,
-            include_all_allowed_visuals=(
-                source is AnswerSource.SYLLABUS_GROUNDED and mode is AnswerMode.LONG
-            ),
         )
         answer = await self._asks.complete(
             ai_request_id=str(request["id"]),

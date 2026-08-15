@@ -442,10 +442,6 @@ class AskService:
                 citation_ids=cited_ids,
                 allowed_citations=allowed_citations,
                 allowed_visuals=allowed_visuals,
-                include_all_allowed_visuals=(
-                    source == AnswerSource.SYLLABUS_GROUNDED
-                    and request.answer_mode == AnswerMode.LONG
-                ),
             )
             async with self._conn.transaction():
                 await self._asks.complete(

@@ -300,7 +300,7 @@ def test_grounded_answer_requires_at_least_one_verified_citation():
         )
 
 
-def test_always_visual_is_backend_guaranteed_and_unsafe_latex_rejected():
+def test_visuals_require_model_selection_and_unsafe_latex_is_rejected():
     visual = VisualDto(
         visual_id="Visual_1",
         title="Diagram",
@@ -315,7 +315,7 @@ def test_always_visual_is_backend_guaranteed_and_unsafe_latex_rejected():
         allowed_citations={"chunk-1": CitationDto(citation_id="chunk-1")},
         allowed_visuals={visual.visual_id: visual},
     )
-    assert result.blocks[-1] == VisualRefBlock(type="visual_ref", visual_id="Visual_1")
+    assert result.visuals == ()
 
     with pytest.raises(AnswerValidationError, match="ANSWER_EQUATION_UNSAFE"):
         validate_generated_answer(
@@ -327,7 +327,7 @@ def test_always_visual_is_backend_guaranteed_and_unsafe_latex_rejected():
         )
 
 
-def test_long_answer_structure_and_all_topic_visuals_are_preserved():
+def test_long_answer_structure_keeps_only_model_selected_topic_visuals():
     visuals = {
         visual_id: VisualDto(
             visual_id=visual_id,
@@ -350,13 +350,9 @@ def test_long_answer_structure_and_all_topic_visuals_are_preserved():
         citation_ids=["chunk-1"],
         allowed_citations={"chunk-1": CitationDto(citation_id="chunk-1")},
         allowed_visuals=visuals,
-        include_all_allowed_visuals=True,
     )
 
     assert isinstance(result.blocks[0], HeadingBlock)
     assert isinstance(result.blocks[1], BulletListBlock)
-    assert [item.visual_id for item in result.visuals] == ["Visual_1", "Visual_2"]
-    assert [block.visual_id for block in result.blocks[2:]] == [
-        "Visual_1",
-        "Visual_2",
-    ]
+    assert result.visuals == ()
+    assert len(result.blocks) == 2

@@ -35,7 +35,7 @@ def _item(index: int) -> dict:
     }
 
 
-def test_polling_status_never_serializes_raw_source_or_storage_reference():
+def test_polling_status_exposes_question_text_not_normalized_or_storage_reference():
     record = {
         "id": "00000000-0000-0000-0000-000000000099",
         "workflow_status": "completed",
@@ -58,7 +58,7 @@ def test_polling_status_never_serializes_raw_source_or_storage_reference():
                 "display_label": "1",
                 "section_context": None,
                 "item_status": "answered",
-                "normalized_question": "safe question",
+                "normalized_question": "internal normalized question",
                 "answer_mode": "mcq",
                 "mcq_options": [],
                 "unclear_reason": None,
@@ -72,14 +72,23 @@ def test_polling_status_never_serializes_raw_source_or_storage_reference():
                 "citation_sources": [],
                 "visual_ids": [],
                 "approved_revision_id": None,
-                "source_text": "RAW_SOURCE_SECRET",
+                "source_text": "What is the fourth state of matter?",
                 "storage_object_key": "private/secret.pdf",
             }
         ],
     }
-    body = json.dumps(_multiple_ask_status_response(record))
-    assert "RAW_SOURCE_SECRET" not in body
+    response = _multiple_ask_status_response(record)
+    body = json.dumps(response)
+    assert "What is the fourth state of matter?" in body
+    assert "internal normalized question" in body
     assert "private/secret.pdf" not in body
+    assert (
+        response["items"][0]["question_text"] == "What is the fourth state of matter?"
+    )
+    assert (
+        response["items"][0]["question_text"]
+        != response["items"][0]["normalized_question"]
+    )
 
 
 @pytest.mark.asyncio

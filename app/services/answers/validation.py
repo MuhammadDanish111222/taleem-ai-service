@@ -50,7 +50,6 @@ def validate_generated_answer(
     citation_ids: Iterable[str],
     allowed_citations: dict[str, CitationDto],
     allowed_visuals: dict[str, VisualDto],
-    include_all_allowed_visuals: bool = False,
 ) -> ValidatedAnswer:
     """Validate the entire response; mixed valid/invalid references fail atomically."""
     citation_id_list = list(citation_ids)
@@ -134,22 +133,6 @@ def validate_generated_answer(
     selected_visuals = tuple(
         allowed_visuals[visual_id] for visual_id in referenced_visual_ids
     )
-    if source == AnswerSource.SYLLABUS_GROUNDED:
-        always_visuals = sorted(
-            (
-                visual
-                for visual in allowed_visuals.values()
-                if (include_all_allowed_visuals or visual.display_policy == "always")
-                and visual.visual_id not in referenced_visual_ids
-            ),
-            key=lambda visual: (visual.display_order, visual.visual_id),
-        )
-        for visual in always_visuals:
-            sanitized.append(
-                VisualRefBlock(type="visual_ref", visual_id=visual.visual_id)
-            )
-        selected_visuals += tuple(always_visuals)
-
     return ValidatedAnswer(
         blocks=tuple(sanitized),
         citations=tuple(allowed_citations[item] for item in citation_id_list),

@@ -307,6 +307,22 @@ def _multiple_ask_status_response(record: dict[str, Any]) -> dict[str, Any]:
                 return fallback
         return value if value is not None else fallback
 
+    def topic_names(item: dict[str, Any]) -> list[str]:
+        source = item.get("answer_source") or item.get("persisted_answer_source")
+        if source not in {"approved_bank", "syllabus_grounded"}:
+            return []
+        limit = 1 if item.get("answer_mode") == "short" else 2
+        names: list[str] = []
+        for citation in json_value(item.get("citation_sources"), []):
+            if not isinstance(citation, dict):
+                continue
+            name = citation.get("topic_title") or citation.get("topicTitle")
+            if isinstance(name, str) and name and name not in names:
+                names.append(name)
+            if len(names) >= limit:
+                break
+        return names
+
     return {
         "job_id": str(record["id"]),
         "workflow_status": record["workflow_status"],
@@ -332,6 +348,7 @@ def _multiple_ask_status_response(record: dict[str, Any]) -> dict[str, Any]:
                 "item_index": item["item_index"],
                 "display_label": item.get("display_label"),
                 "section_context": item.get("section_context"),
+                "question_text": item.get("source_text"),
                 "item_status": item["item_status"],
                 "normalized_question": item["normalized_question"],
                 "answer_mode": item["answer_mode"],
@@ -371,6 +388,8 @@ def _multiple_ask_status_response(record: dict[str, Any]) -> dict[str, Any]:
                             else None
                         ),
                         "mcq_result": json_value(item.get("mcq_result"), None),
+                        "topic_names": topic_names(item),
+                        "visuals": json_value(item.get("visuals"), []),
                     }
                     if item["item_status"] == "answered"
                     else None
