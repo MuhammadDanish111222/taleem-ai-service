@@ -42,3 +42,11 @@ def test_feature_lifecycle_is_a_small_explicit_enum():
         RuntimeSettingsService._validate(definition, state, Scope(kind="global"))
     with pytest.raises(RuntimeSettingError, match="RUNTIME_SETTING_VALUE_INVALID"):
         RuntimeSettingsService._validate(definition, "beta", Scope(kind="global"))
+
+
+def test_usage_key_rejects_scope_for_a_different_tier():
+    definition = REGISTRY["usage.single_question.daily_limit.google"]
+    with pytest.raises(RuntimeSettingError, match="RUNTIME_SETTING_TIER_MISMATCH"):
+        RuntimeSettingsService._validate(
+            definition, 6, Scope(kind="account_tier", account_tier="premium")
+        )

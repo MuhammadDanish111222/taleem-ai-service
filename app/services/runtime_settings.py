@@ -257,6 +257,11 @@ def _feature_for_usage(key: str) -> str:
     )
 
 
+def _tier_for_usage(key: str) -> str:
+    """The tier embedded in a usage key is the sole tier authority."""
+    return key.rsplit(".", 1)[-1]
+
+
 class RuntimeSettingsService:
     def __init__(self, conn: asyncpg.Connection):
         self._conn = conn
@@ -292,6 +297,11 @@ class RuntimeSettingsService:
     def _validate(definition: SettingDefinition, value: Any, scope: Scope) -> None:
         if scope.kind not in definition.scopes:
             raise RuntimeSettingError("RUNTIME_SETTING_SCOPE_INVALID")
+        if (
+            definition.owner == "usage_policies"
+            and scope.account_tier != _tier_for_usage(definition.key)
+        ):
+            raise RuntimeSettingError("RUNTIME_SETTING_TIER_MISMATCH")
         if definition.value_type == "boolean" and type(value) is not bool:
             raise RuntimeSettingError("RUNTIME_SETTING_TYPE_INVALID")
         if definition.value_type == "integer" and (

@@ -13,6 +13,7 @@ import redis
 
 from app.core.config import get_settings
 from app.repositories.audit_repository import AuditRepository
+from app.services.operational_events import record_operational_event
 from app.services.usage.limits import UsagePolicyCache, get_usage_policy_cache
 from app.services.usage.models import (
     AccountTier,
@@ -176,6 +177,14 @@ class UsageService:
             )
             decision, redis_used = int(result[0]), int(result[1])
             if decision == 0:
+                await record_operational_event(
+                    conn,
+                    feature=feature,
+                    event_type="quota_block",
+                    outcome="denied",
+                    error_code="USAGE_LIMIT_REACHED",
+                    request_id=request_id,
+                )
                 raise UsageLimitExceeded(
                     used=redis_used,
                     limit=policy.daily_limit,
@@ -248,6 +257,14 @@ class UsageService:
                     window.business_date,
                     feature,
                     safe_uid,
+                )
+                await record_operational_event(
+                    conn,
+                    feature=feature,
+                    event_type="quota_block",
+                    outcome="denied",
+                    error_code="USAGE_LIMIT_REACHED",
+                    request_id=request_id,
                 )
                 raise UsageLimitExceeded(
                     used=int(current or 0),

@@ -45,6 +45,7 @@ from app.services.answers.validation import (
     AnswerValidationError,
     validate_generated_answer,
 )
+from app.services.operational_events import record_operational_event
 from app.services.prompts.models import (
     AnswerMode as PromptAnswerMode,
 )
@@ -306,6 +307,16 @@ class AskService:
                 request.question,
                 retrieval_scope,
                 query_vector=query_vector,
+            )
+            # Exact approved-bank answers return above and never enter this
+            # denominator.  Only a completed scoped retrieval with no evidence
+            # is a retrieval-empty outcome.
+            await record_operational_event(
+                self._conn,
+                feature="single_question",
+                event_type="retrieval_outcome",
+                outcome="empty" if not evidence.results else "evidence_found",
+                request_id=request_id,
             )
             active_version = await RagRepository(self._conn).get_active_corpus_version(
                 request.board_id, request.class_id, request.subject_id
