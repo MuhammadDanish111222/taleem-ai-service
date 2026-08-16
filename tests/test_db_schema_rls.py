@@ -54,6 +54,7 @@ async def test_migrations_execution_and_idempotency():
         assert "0015_module5_stage5_mcq_batches.sql" in versions
         assert "0016_voyage_halfvec_512.sql" in versions
         assert "0017_module6_blueprints.sql" in versions
+        assert "0018_module6_selector_stable_order.sql" in versions
     finally:
         await connection.close()
 

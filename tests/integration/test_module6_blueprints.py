@@ -190,12 +190,13 @@ async def test_blueprint_validation_and_activation_are_database_enforced(conn):
     await add_question(conn, chapter="chapter-1")
     valid = spec([section("B", select_count=1)])
     with pytest.raises(asyncpg.RaiseError):
-        await conn.execute(
-            """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
-                              VALUES($1,$2,$3,'bad',$4::jsonb,FALSE,'test','test')""",
-            *SCOPE,
-            json.dumps(spec([section("B", select_count=1, attempt_count=2)])),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
+                                  VALUES($1,$2,$3,'bad',$4::jsonb,FALSE,'test','test')""",
+                *SCOPE,
+                json.dumps(spec([section("B", select_count=1, attempt_count=2)])),
+            )
     await conn.execute(
         """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
                           VALUES($1,$2,$3,'valid',$4::jsonb,TRUE,'test','test')""",
@@ -203,18 +204,20 @@ async def test_blueprint_validation_and_activation_are_database_enforced(conn):
         json.dumps(valid),
     )
     with pytest.raises(asyncpg.UniqueViolationError):
-        await conn.execute(
-            """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
-                              VALUES($1,$2,$3,'second',$4::jsonb,TRUE,'test','test')""",
-            *SCOPE,
-            json.dumps(valid),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
+                                  VALUES($1,$2,$3,'second',$4::jsonb,TRUE,'test','test')""",
+                *SCOPE,
+                json.dumps(valid),
+            )
     with pytest.raises(asyncpg.RaiseError):
-        await conn.execute(
-            """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
-               VALUES($1,$2,$3,'unsatisfied',$4::jsonb,TRUE,'test','test')""",
-            SCOPE[0],
-            "module6-empty-class",
-            SCOPE[2],
-            json.dumps(valid),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                """INSERT INTO board_paper_blueprints(board_id,class_id,subject_id,name,config,is_active,created_by,updated_by)
+                   VALUES($1,$2,$3,'unsatisfied',$4::jsonb,TRUE,'test','test')""",
+                SCOPE[0],
+                "module6-empty-class",
+                SCOPE[2],
+                json.dumps(valid),
+            )
