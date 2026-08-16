@@ -350,7 +350,9 @@ async def ask_admin(
                     "blueprint": {
                         "id": row["id"],
                         "name": row["name"],
-                        "config": json.loads(config) if isinstance(config, str) else config,
+                        "config": json.loads(config)
+                        if isinstance(config, str)
+                        else config,
                         "is_active": bool(row["is_active"]),
                         "created_at": row["created_at"].isoformat(),
                         "updated_at": row["updated_at"].isoformat(),
@@ -410,7 +412,8 @@ async def ask_admin(
                                 "name": before["name"],
                                 "is_active": bool(before["is_active"]),
                             }
-                            if before else None
+                            if before
+                            else None
                         ),
                         after_value={
                             "name": row["name"],
@@ -422,7 +425,9 @@ async def ask_admin(
                     "blueprint": {
                         "id": row["id"],
                         "name": row["name"],
-                        "config": json.loads(row["config"]) if isinstance(row["config"], str) else row["config"],
+                        "config": json.loads(row["config"])
+                        if isinstance(row["config"], str)
+                        else row["config"],
                         "is_active": bool(row["is_active"]),
                         "updated_at": row["updated_at"].isoformat(),
                     },
