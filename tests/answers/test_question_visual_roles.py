@@ -84,3 +84,12 @@ def test_stage3_migration_filters_student_paper_visuals_to_question_role():
     ).read()
     assert "link.role='question'" in migration
     assert "DEFAULT 'answer'" in migration
+
+
+def test_test_paper_visual_lookup_is_question_only_and_service_role_only():
+    migration = open(
+        "migrations/0021_module6_test_paper_visuals.sql", encoding="utf-8"
+    ).read()
+    assert "link.role = 'question'" in migration
+    assert "r.superseded_at IS NULL" in migration
+    assert "FROM PUBLIC, anon, authenticated" in migration
