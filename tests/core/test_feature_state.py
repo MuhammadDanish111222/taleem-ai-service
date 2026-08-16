@@ -1,4 +1,5 @@
 import time
+import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,7 +39,7 @@ def create_token(feature: str = "feature_state_read", uid: str = "server-render"
         "request_id": "req-123",
         "aud": "taleem-ai-service",
         "iss": "taleem-web",
-        "jti": f"jti-feature-state-{now}-{feature}",
+        "jti": f"jti-feature-state-{uuid.uuid4()}",
         "iat": now,
         "exp": now + 60,
     }
