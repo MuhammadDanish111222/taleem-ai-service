@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from app.api.v1 import (
     ask,
     ask_admin,
+    feature_state,
     health,
     internal,
     operations_dashboard,
@@ -36,6 +37,7 @@ app = FastAPI(
 
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(internal.router, prefix="/api/v1", tags=["internal"])
+app.include_router(feature_state.router, prefix="/api/v1", tags=["feature-state"])
 app.include_router(ask.router, prefix="/api/v1", tags=["ask"])
 app.include_router(ask_admin.router, prefix="/api/v1", tags=["ask-admin"])
 app.include_router(

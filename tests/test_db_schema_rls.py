@@ -55,6 +55,12 @@ async def test_migrations_execution_and_idempotency():
         assert "0016_voyage_halfvec_512.sql" in versions
         assert "0017_module6_blueprints.sql" in versions
         assert "0018_module6_selector_stable_order.sql" in versions
+        assert "0019_module6_ephemeral_test_generation.sql" in versions
+        assert "0020_question_answer_visual_roles.sql" in versions
+        assert "0021_operations_dashboard.sql" in versions
+        assert "0022_runtime_settings.sql" in versions
+        assert "0023_operational_events.sql" in versions
+        assert "0024_feature_state.sql" in versions
     finally:
         await connection.close()
 
@@ -297,3 +303,57 @@ async def test_provider_attempts_check_constraints(conn):
                 VALUES ('openai', 'gpt-4o', 'invalid_status');
                 """
             )
+
+
+@pytest.mark.asyncio
+async def test_taleem_runtime_feature_state(conn):
+    """Verifies taleem_runtime_feature_state SQL function and fail-closed behavior."""
+    # 1. Defaults when no setting is present
+    state_tg = await conn.fetchval(
+        "SELECT taleem_runtime_feature_state('test_generation');"
+    )
+    assert state_tg == "enabled"
+
+    state_ma = await conn.fetchval(
+        "SELECT taleem_runtime_feature_state('multiple_ask');"
+    )
+    assert state_ma == "disabled"
+
+    # 2. Unknown feature fails closed to disabled
+    state_unk = await conn.fetchval(
+        "SELECT taleem_runtime_feature_state('unknown_feature');"
+    )
+    assert state_unk == "disabled"
+
+    # 3. Explicit states
+    async with conn.transaction():
+        await conn.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_by)
+            VALUES ('runtime:feature.test_generation:global|||', '"coming_soon"'::jsonb, 'admin')
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+            """
+        )
+        state_tg_cs = await conn.fetchval(
+            "SELECT taleem_runtime_feature_state('test_generation');"
+        )
+        assert state_tg_cs == "coming_soon"
+
+        # Corrupted value fails closed to disabled
+        await conn.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_by)
+            VALUES ('runtime:feature.test_generation:global|||', '"broken_state"'::jsonb, 'admin')
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+            """
+        )
+        state_tg_corrupt = await conn.fetchval(
+            "SELECT taleem_runtime_feature_state('test_generation');"
+        )
+        assert state_tg_corrupt == "disabled"
+
+    # 4. taleem_runtime_feature_enabled backward compatibility check
+    is_enabled = await conn.fetchval(
+        "SELECT taleem_runtime_feature_enabled('test_generation');"
+    )
+    assert is_enabled is True

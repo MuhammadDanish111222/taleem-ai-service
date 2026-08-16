@@ -40,7 +40,10 @@ async def _request(
 
 @pytest.mark.asyncio
 async def test_dashboard_uses_exact_persisted_aggregates_and_redacts_content():
-    conn = await asyncpg.connect(DB_URL)
+    try:
+        conn = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         await _clean(conn)
         corpus = await conn.fetchval(
@@ -195,7 +198,10 @@ async def test_dashboard_uses_exact_persisted_aggregates_and_redacts_content():
 
 @pytest.mark.asyncio
 async def test_empty_periods_are_zero_or_empty():
-    conn = await asyncpg.connect(DB_URL)
+    try:
+        conn = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         await _clean(conn)
         data = await OperationsDashboardService(conn).dashboard("24h")
@@ -214,7 +220,10 @@ async def test_empty_periods_are_zero_or_empty():
 
 @pytest.mark.asyncio
 async def test_audit_search_is_deterministic_and_content_free(monkeypatch):
-    conn = await asyncpg.connect(DB_URL)
+    try:
+        conn = await asyncpg.connect(DB_URL)
+    except (ConnectionRefusedError, OSError):
+        pytest.skip("PostgreSQL database is unavailable.")
     try:
         await _clean(conn)
         first = UUID("00000000-0000-0000-0000-000000000001")

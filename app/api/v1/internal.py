@@ -170,14 +170,24 @@ async def _multiple_ask_tier(auth: AuthContext) -> AccountTier:
     # The environment switch is no longer the public source of truth. The
     # default database lifecycle state remains disabled, so incomplete flows
     # stay fail-closed until an audited local-admin change enables them.
-    async with get_db_connection() as conn:
-        if (
-            await RuntimeSettingsService(conn).get(
+    try:
+        async with get_db_connection() as conn:
+            state = await RuntimeSettingsService(conn).get(
                 "feature.multiple_ask", Scope(kind="global")
             )
-            != "enabled"
-        ):
-            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "MULTIPLE_ASK_UNAVAILABLE",
+                "message": "Multiple Ask is temporarily unavailable",
+            },
+        ) from None
+
+    if state == "coming_soon":
+        raise HTTPException(status_code=409, detail={"code": "FEATURE_COMING_SOON"})
+    if state != "enabled":
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     if auth.feature != "multiple_ask":
         raise HTTPException(
             status_code=403,

@@ -144,3 +144,16 @@ jobs:
           sleep 3
           kill -TERM $WORKER_PID
           wait $WORKER_PID || true
+
+  deno-edge-tests:
+    name: Supabase Edge Function tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.3.3"
+      - name: Run Edge auth tests
+        run: deno test --allow-env supabase/functions/generate-test-paper/auth_test.ts
+      - name: Run Edge handler tests
+        run: deno test --allow-env supabase/functions/generate-test-paper/index_test.ts
