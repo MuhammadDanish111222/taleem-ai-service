@@ -1,0 +1,4 @@
+[functions.generate-test-paper]
+# The gateway cannot validate Taleem's RS256 token. The function verifies it
+# cryptographically itself before it can use the service-role RPC client.
+verify_jwt = false
