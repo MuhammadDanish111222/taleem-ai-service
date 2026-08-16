@@ -209,7 +209,9 @@ class MultipleAskAnswerService:
                         answer_source=AnswerSource.APPROVED_BANK.value,
                         blocks=list(approved.blocks),
                         citations=list(approved.citations),
-                        visual_ids=[visual["visual_id"] for visual in approved.answer_visuals],
+                        visual_ids=[
+                            visual["visual_id"] for visual in approved.answer_visuals
+                        ],
                         prompt_version="approved-bank",
                         corpus_version_id=None,
                         provider=None,
@@ -296,7 +298,9 @@ class MultipleAskAnswerService:
                         answer_source=AnswerSource.APPROVED_BANK.value,
                         blocks=list(approved.blocks),
                         citations=list(approved.citations),
-                        visual_ids=[visual["visual_id"] for visual in approved.answer_visuals],
+                        visual_ids=[
+                            visual["visual_id"] for visual in approved.answer_visuals
+                        ],
                         prompt_version="approved-bank",
                         corpus_version_id=None,
                         provider=None,

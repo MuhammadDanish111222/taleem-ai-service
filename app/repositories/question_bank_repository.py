@@ -67,8 +67,16 @@ class QuestionBankRepository:
             answer_style=row["answer_style"],
             blocks=tuple(blocks),
             citations=tuple(dict(item) for item in citation_rows),
-            question_visuals=tuple({key: value for key, value in dict(item).items() if key != "role"} for item in visual_rows if item["role"] == "question"),
-            answer_visuals=tuple({key: value for key, value in dict(item).items() if key != "role"} for item in visual_rows if item["role"] == "answer"),
+            question_visuals=tuple(
+                {key: value for key, value in dict(item).items() if key != "role"}
+                for item in visual_rows
+                if item["role"] == "question"
+            ),
+            answer_visuals=tuple(
+                {key: value for key, value in dict(item).items() if key != "role"}
+                for item in visual_rows
+                if item["role"] == "answer"
+            ),
         )
 
     @staticmethod
@@ -327,7 +335,10 @@ class QuestionBankRepository:
                 chunk_id,
                 order,
             )
-        for role, visual_row_ids in (("question", question_visual_row_ids), ("answer", answer_visual_row_ids)):
+        for role, visual_row_ids in (
+            ("question", question_visual_row_ids),
+            ("answer", answer_visual_row_ids),
+        ):
             for order, visual_id in enumerate(visual_row_ids):
                 await self.conn.execute(
                     """INSERT INTO question_bank_revision_visuals(
@@ -543,7 +554,11 @@ class QuestionBankRepository:
             raise ValueError("EMBEDDING_TARGET_NOT_ACTIVE")
 
     async def set_visual_links(
-        self, *, revision_id: str, question_visual_row_ids: list[str], answer_visual_row_ids: list[str]
+        self,
+        *,
+        revision_id: str,
+        question_visual_row_ids: list[str],
+        answer_visual_row_ids: list[str],
     ) -> None:
         exists = await self.conn.fetchval(
             """SELECT EXISTS(
@@ -568,7 +583,10 @@ class QuestionBankRepository:
             "DELETE FROM question_bank_revision_visuals WHERE revision_id=$1::uuid",
             revision_id,
         )
-        for role, visual_row_ids in (("question", question_visual_row_ids), ("answer", answer_visual_row_ids)):
+        for role, visual_row_ids in (
+            ("question", question_visual_row_ids),
+            ("answer", answer_visual_row_ids),
+        ):
             for order, visual_id in enumerate(visual_row_ids):
                 await self.conn.execute(
                     """INSERT INTO question_bank_revision_visuals(

@@ -856,7 +856,10 @@ async def ask_admin(
                         action="bank.visual_links_changed",
                         target_type="question_revision",
                         target_id=revision_id,
-                        after_value={"question_visual_ids": request.question_visual_ids, "answer_visual_ids": request.answer_visual_ids},
+                        after_value={
+                            "question_visual_ids": request.question_visual_ids,
+                            "answer_visual_ids": request.answer_visual_ids,
+                        },
                     )
                 return {"status": "updated"}
     except LookupError as exc:

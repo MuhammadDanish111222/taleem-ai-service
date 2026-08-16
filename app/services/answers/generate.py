@@ -660,7 +660,9 @@ class AskService:
             answer_style=request.answer_style,
             blocks=_BLOCKS.validate_python(list(approved.blocks)),
             citations=[CitationDto.model_validate(item) for item in approved.citations],
-            visuals=[VisualDto.model_validate(item) for item in approved.answer_visuals],
+            visuals=[
+                VisualDto.model_validate(item) for item in approved.answer_visuals
+            ],
             general_ai_label=None,
             prompt_version=None,
             corpus_version=None,
@@ -716,7 +718,8 @@ class AskService:
                         CitationDto.model_validate(item) for item in approved.citations
                     ],
                     visuals=[
-                        VisualDto.model_validate(item) for item in approved.answer_visuals
+                        VisualDto.model_validate(item)
+                        for item in approved.answer_visuals
                     ],
                     approved_revision_id=approved.revision_id,
                     usage=self._usage_dto(reservation),
