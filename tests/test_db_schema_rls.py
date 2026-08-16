@@ -352,6 +352,11 @@ async def test_taleem_runtime_feature_state(conn):
         )
         assert state_tg_corrupt == "disabled"
 
+        # Cleanup
+        await conn.execute(
+            "DELETE FROM system_settings WHERE key = 'runtime:feature.test_generation:global|||';"
+        )
+
     # 4. taleem_runtime_feature_enabled backward compatibility check
     is_enabled = await conn.fetchval(
         "SELECT taleem_runtime_feature_enabled('test_generation');"

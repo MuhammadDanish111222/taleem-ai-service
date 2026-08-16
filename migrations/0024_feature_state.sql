@@ -38,6 +38,19 @@ $$;
 REVOKE ALL ON FUNCTION taleem_runtime_feature_state(TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION taleem_runtime_feature_state(TEXT) TO service_role;
 
+-- Update taleem_runtime_feature_enabled() for backward compatibility
+CREATE OR REPLACE FUNCTION taleem_runtime_feature_enabled(p_feature TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+    SELECT taleem_runtime_feature_state(p_feature) = 'enabled';
+$$;
+REVOKE ALL ON FUNCTION taleem_runtime_feature_enabled(TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION taleem_runtime_feature_enabled(TEXT) TO service_role;
+
 -- Replaces checked wrapper using CREATE OR REPLACE FUNCTION (preserves dependent grants)
 CREATE OR REPLACE FUNCTION taleem_generate_test_paper(
     p_mode TEXT, p_board_id TEXT, p_class_id TEXT, p_subject_id TEXT,
