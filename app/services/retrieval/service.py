@@ -27,6 +27,7 @@ from app.services.retrieval.evidence import (
     classify_evidence,
 )
 from app.services.retrieval.fusion import RankedChannelHit, fuse_ranked_hits
+from app.services.runtime_settings import RuntimeSettingsService, Scope
 
 
 class QueryEmbeddingProvider(Protocol):
@@ -63,13 +64,19 @@ class RetrievalService:
         ]
         | None = None,
         *,
-        dense_top_k: int = 10,
-        expected_question_top_k: int = 10,
-        lexical_top_k: int = 10,
+        dense_top_k: int | None = None,
+        expected_question_top_k: int | None = None,
+        lexical_top_k: int | None = None,
         active_version_cache: ActiveCorpusVersionCache | None = None,
     ):
-        if min(dense_top_k, expected_question_top_k, lexical_top_k) < 1:
+        supplied = [
+            value
+            for value in (dense_top_k, expected_question_top_k, lexical_top_k)
+            if value is not None
+        ]
+        if supplied and min(supplied) < 1:
             raise ValueError("RETRIEVAL_TOP_K_MUST_BE_POSITIVE")
+        self._conn = conn
         self._repo = RagRepository(conn)
         self._provider_factory = provider_factory or _cached_voyage_provider
         self._dense_top_k = dense_top_k
@@ -77,6 +84,29 @@ class RetrievalService:
         self._lexical_top_k = lexical_top_k
         self._active_version_cache = (
             active_version_cache or get_active_corpus_version_cache()
+        )
+
+    async def _candidate_counts(self) -> tuple[int, int, int]:
+        """Resolve independently tunable retrieval channels on every request.
+
+        Explicit constructor values remain useful for deterministic tests and
+        one-off named-version QA; normal production construction reads the
+        versioned database settings and therefore never needs a redeploy.
+        """
+        service = RuntimeSettingsService(self._conn)
+        scope = Scope(kind="global")
+        return (
+            self._dense_top_k
+            if self._dense_top_k is not None
+            else int(await service.get("retrieval.dense_candidate_count", scope)),
+            self._expected_question_top_k
+            if self._expected_question_top_k is not None
+            else int(
+                await service.get("retrieval.expected_question_candidate_count", scope)
+            ),
+            self._lexical_top_k
+            if self._lexical_top_k is not None
+            else int(await service.get("retrieval.lexical_candidate_count", scope)),
         )
 
     def _configuration_from_active_version(
@@ -229,6 +259,11 @@ class RetrievalService:
         elif len(query_vector) != configuration.dimensions:
             raise RetrievalConfigurationError("QUERY_EMBEDDING_DIMENSION_MISMATCH")
 
+        (
+            dense_top_k,
+            expected_question_top_k,
+            lexical_top_k,
+        ) = await self._candidate_counts()
         dense_rows = await self._repo.search_active_chunks_cosine(
             scope.board_id,
             scope.class_id,
@@ -236,7 +271,7 @@ class RetrievalService:
             corpus_version_id,
             query_vector,
             scope.chapter_id,
-            self._dense_top_k,
+            dense_top_k,
             allow_named_draft,
         )
         expected_rows = await self._repo.search_active_expected_questions_cosine(
@@ -246,7 +281,7 @@ class RetrievalService:
             corpus_version_id,
             query_vector,
             scope.chapter_id,
-            self._expected_question_top_k,
+            expected_question_top_k,
             allow_named_draft,
         )
         lexical_rows = await self._repo.search_active_chunks_lexical(
@@ -256,7 +291,7 @@ class RetrievalService:
             corpus_version_id,
             normalized_question,
             scope.chapter_id,
-            self._lexical_top_k,
+            lexical_top_k,
             allow_named_draft,
         )
 

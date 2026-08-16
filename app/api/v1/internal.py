@@ -6,7 +6,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
 from app.core.firebase_admin import get_firebase_app
 from app.core.internal_auth import AuthContext, verify_internal_jwt
 from app.db.pool import get_db_connection
@@ -25,6 +24,7 @@ from app.services.multiple_ask_answers import MultipleAskAnswerService
 from app.services.multiple_ask_extraction_service import MultipleAskExtractionService
 from app.services.retrieval.evidence import RetrievalScope
 from app.services.retrieval.service import RetrievalScopeError, RetrievalService
+from app.services.runtime_settings import RuntimeSettingsService, Scope
 from app.services.usage.models import AccountTier
 from app.services.usage.service import UsageLimitExceeded, UsageService
 
@@ -166,9 +166,18 @@ def _get_firestore_db():
     return firestore.client(app=app)
 
 
-def _multiple_ask_tier(auth: AuthContext) -> AccountTier:
-    if not get_settings().MULTIPLE_ASK_RUN1_ENABLED:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+async def _multiple_ask_tier(auth: AuthContext) -> AccountTier:
+    # The environment switch is no longer the public source of truth. The
+    # default database lifecycle state remains disabled, so incomplete flows
+    # stay fail-closed until an audited local-admin change enables them.
+    async with get_db_connection() as conn:
+        if (
+            await RuntimeSettingsService(conn).get(
+                "feature.multiple_ask", Scope(kind="global")
+            )
+            != "enabled"
+        ):
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
     if auth.feature != "multiple_ask":
         raise HTTPException(
             status_code=403,
@@ -210,7 +219,7 @@ async def create_multiple_ask_upload_session(
     auth_context: AuthContext = Depends(verify_internal_jwt),
 ):
     """Mint a browser-safe capability for one private temporary file object."""
-    tier = _multiple_ask_tier(auth_context)
+    tier = await _multiple_ask_tier(auth_context)
     if str(request.request_id) != auth_context.request_id:
         raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
     try:
@@ -237,7 +246,7 @@ async def finalize_multiple_ask_upload_session(
     auth_context: AuthContext = Depends(verify_internal_jwt),
 ):
     """Finalize the source and atomically create its durable validation job."""
-    tier = _multiple_ask_tier(auth_context)
+    tier = await _multiple_ask_tier(auth_context)
     if str(request.request_id) != auth_context.request_id:
         raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
     try:
@@ -266,7 +275,7 @@ async def submit_multiple_ask_text(
     auth_context: AuthContext = Depends(verify_internal_jwt),
 ):
     """Small pasted text uses the same durable parent/quota model, not Storage."""
-    tier = _multiple_ask_tier(auth_context)
+    tier = await _multiple_ask_tier(auth_context)
     if str(request.request_id) != auth_context.request_id:
         raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
     try:
@@ -413,7 +422,7 @@ def _multiple_ask_status_response(record: dict[str, Any]) -> dict[str, Any]:
 async def get_multiple_ask_job_status(
     job_id: UUID, auth_context: AuthContext = Depends(verify_internal_jwt)
 ):
-    _multiple_ask_tier(auth_context)
+    await _multiple_ask_tier(auth_context)
     async with get_db_connection() as conn:
         record = await MultipleAskRepository(conn).get_owned_job_status(
             job_id=str(job_id), uid_hash=UsageService().uid_hash(auth_context.uid)
@@ -431,7 +440,7 @@ async def multiple_ask_visual_reference(
     visual_id: str,
     auth_context: AuthContext = Depends(verify_internal_jwt),
 ):
-    _multiple_ask_tier(auth_context)
+    await _multiple_ask_tier(auth_context)
     if not visual_id or len(visual_id) > 160:
         raise HTTPException(status_code=404, detail={"code": "VISUAL_NOT_FOUND"})
     try:
@@ -458,7 +467,7 @@ async def correct_multiple_ask_item(
     request: MultipleAskCorrectionRequest,
     auth_context: AuthContext = Depends(verify_internal_jwt),
 ):
-    _multiple_ask_tier(auth_context)
+    await _multiple_ask_tier(auth_context)
     if str(request.request_id) != auth_context.request_id:
         raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
     try:
@@ -488,7 +497,7 @@ async def resume_multiple_ask_job(
     request: MultipleAskResumeRequest,
     auth_context: AuthContext = Depends(verify_internal_jwt),
 ):
-    _multiple_ask_tier(auth_context)
+    await _multiple_ask_tier(auth_context)
     if str(request.request_id) != auth_context.request_id:
         raise HTTPException(status_code=409, detail={"code": "REQUEST_ID_MISMATCH"})
     try:

@@ -24,6 +24,7 @@ from app.services.multiple_ask_extraction import (
     extract_ordered_questions,
 )
 from app.services.multiple_ask_storage import TemporaryUploadStorage
+from app.services.runtime_settings import RuntimeSettingsService, Scope
 from app.services.usage.service import UsageService
 
 
@@ -87,8 +88,17 @@ class MultipleAskExtractionService:
         self._conn = conn
         self._repo = MultipleAskRepository(conn)
         self._storage = storage or TemporaryUploadStorage()
-        self._ocr = ocr or GeminiOCRProvider(
-            timeout_seconds=get_settings().MULTIPLE_ASK_OCR_TIMEOUT_SECONDS
+        self._ocr = ocr
+
+    async def _ocr_provider(self) -> OCRProvider:
+        if self._ocr is not None:
+            return self._ocr
+        return GeminiOCRProvider(
+            timeout_seconds=int(
+                await RuntimeSettingsService(self._conn).get(
+                    "multiple_ask.ocr_timeout_seconds", Scope(kind="global")
+                )
+            )
         )
 
     async def start_initial_extraction(self, session_id: str) -> dict[str, Any] | None:
@@ -239,7 +249,11 @@ class MultipleAskExtractionService:
             source = await self._normalized_source(context)
             extracted = source.get("structured_questions") or extract_ordered_questions(
                 source["normalized_text"],
-                max_questions=get_settings().MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS,
+                max_questions=int(
+                    await RuntimeSettingsService(self._conn).get(
+                        "multiple_ask.max_extracted_questions", Scope(kind="global")
+                    )
+                ),
             )
         except QuestionLimitExceeded:
             await self.fail_and_refund(
@@ -422,10 +436,13 @@ class MultipleAskExtractionService:
                 locators.append({"page_number": page_number, "source_kind": "ocr"})
         finally:
             document.close()
-        if len(structured) > get_settings().MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS:
-            raise QuestionLimitExceeded(
-                len(structured), get_settings().MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS
+        max_questions = int(
+            await RuntimeSettingsService(self._conn).get(
+                "multiple_ask.max_extracted_questions", Scope(kind="global")
             )
+        )
+        if len(structured) > max_questions:
+            raise QuestionLimitExceeded(len(structured), max_questions)
         normalized = normalize_source_text(
             "\f\n".join(pages),
             max_characters=get_settings().MULTIPLE_ASK_MAX_TEXT_CHARACTERS,
@@ -472,12 +489,13 @@ class MultipleAskExtractionService:
     async def _ocr_questions(
         self, image_bytes: bytes, *, page_number: int
     ) -> list[ExtractedQuestion]:
-        structured_extract = getattr(self._ocr, "extract_image_questions", None)
+        provider = await self._ocr_provider()
+        structured_extract = getattr(provider, "extract_image_questions", None)
         if structured_extract is None:
             # Compatibility for bounded fakes and legacy providers; production
             # Gemini always takes the structured path.
             return self._with_page_number(
-                extract_ordered_questions(await self._ocr_text(image_bytes)),
+                extract_ordered_questions(await self._ocr_text(image_bytes, provider)),
                 page_number,
             )
         try:
@@ -540,9 +558,13 @@ class MultipleAskExtractionService:
             {"page_number": page_number, "display_label": item.display_label},
         )
 
-    async def _ocr_text(self, image_bytes: bytes) -> str:
+    async def _ocr_text(
+        self, image_bytes: bytes, provider: OCRProvider | None = None
+    ) -> str:
         try:
-            return await self._ocr.extract_image_text(image_bytes)
+            return await (provider or await self._ocr_provider()).extract_image_text(
+                image_bytes
+            )
         except OCRProviderError as exc:
             raise MultipleAskExtractionError(exc.code, status_code=503) from exc
 

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1 import ask, ask_admin, health, internal
+from app.api.v1 import ask, ask_admin, health, internal, runtime_settings_admin
 from app.db.pool import close_db_pool, init_db_pool
 
 logger = logging.getLogger(__name__)
@@ -31,3 +31,6 @@ app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(internal.router, prefix="/api/v1", tags=["internal"])
 app.include_router(ask.router, prefix="/api/v1", tags=["ask"])
 app.include_router(ask_admin.router, prefix="/api/v1", tags=["ask-admin"])
+app.include_router(
+    runtime_settings_admin.router, prefix="/api/v1", tags=["runtime-settings-admin"]
+)

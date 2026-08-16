@@ -81,7 +81,9 @@ def classify_evidence(results: tuple[RetrievedEvidence, ...]) -> EvidenceResult:
 
     Retrieval values remain ranks rather than confidence or probability values.
     A contribution at rank 1--3 can qualify for strong evidence only alongside
-    a distinct qualifying channel on the same top parent chunk.
+    a distinct qualifying channel on the same top parent chunk. This is kept
+    out of runtime settings because relaxing it would weaken grounded-answer
+    integrity rather than tune an operational resource limit.
     """
     if not results:
         return EvidenceResult(

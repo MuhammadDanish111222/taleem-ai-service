@@ -44,6 +44,7 @@ from app.services.multiple_ask import MultipleAskError
 from app.services.prompts.models import AnswerMode as PromptAnswerMode
 from app.services.prompts.models import PromptKey, PromptScope
 from app.services.retrieval.evidence import EvidenceStrength, RetrievalScope
+from app.services.runtime_settings import RuntimeSettingsService, Scope
 from app.services.usage.service import UsageService
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,11 @@ class MultipleAskAnswerService:
 
     async def answer(self, *, session_id: str, epoch: int) -> str | dict[str, Any]:
         """Runs a small batch of items; returns _next_job to chain until all items reach a terminal state."""
-        batch_size = get_settings().MULTIPLE_ASK_ANSWER_BATCH_SIZE
+        batch_size = int(
+            await RuntimeSettingsService(self._conn).get(
+                "multiple_ask.answer_batch_size", Scope(kind="global")
+            )
+        )
         async with self._conn.transaction():
             job = await self._repo.lock_answer_context(session_id)
             if job is None:
