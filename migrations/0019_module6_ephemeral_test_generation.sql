@@ -1,5 +1,15 @@
 -- Module 6 Stage 3.  This is a read-only, paper-safe wrapper around the
 -- canonical Stage 2 selector; generated papers are intentionally never stored.
+-- Hosted Supabase provides this role.  The disposable CI PostgreSQL fixture
+-- does not, so create the non-login compatibility role before granting it RPC
+-- execution.  SECURITY DEFINER keeps the function's table access narrow.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE service_role NOLOGIN;
+    END IF;
+END $$;
+
 SET search_path = public, pg_catalog;
 
 CREATE OR REPLACE FUNCTION taleem_generate_test_paper(
