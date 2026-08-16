@@ -98,7 +98,7 @@ def test_bulk_import_rejects_malformed_mcq_options(options, correct_answer):
         )
 
 
-def test_bulk_import_normalizes_mcq_and_visuals_to_existing_bank_contract():
+def test_bulk_import_normalizes_mcq_and_explicit_visual_roles_to_bank_contract():
     value = BulkImportQuestionInput(
         **_question(
             question="Which particle has a negative charge?",
@@ -106,7 +106,8 @@ def test_bulk_import_normalizes_mcq_and_visuals_to_existing_bank_contract():
             options=["Proton", "Electron"],
             correct_answer="Electron",
             answer_blocks=[],
-            visual_ids=["atom-diagram"],
+            question_visual_ids=["atom-diagram"],
+            answer_visual_ids=["annotated-atom"],
         )
     ).as_approved_question(
         board_id="punjab",
@@ -121,4 +122,10 @@ def test_bulk_import_normalizes_mcq_and_visuals_to_existing_bank_contract():
         ("2", "Electron", True),
     ]
     assert [block.type for block in value.blocks] == ["visual_ref"]
-    assert value.visual_ids == ["atom-diagram"]
+    assert value.question_visual_ids == ["atom-diagram"]
+    assert value.answer_visual_ids == ["annotated-atom"]
+
+
+def test_bulk_import_rejects_legacy_ambiguous_visual_ids():
+    with pytest.raises(ValidationError):
+        BulkImportQuestionInput(**_question(visual_ids=["legacy-visual"]))

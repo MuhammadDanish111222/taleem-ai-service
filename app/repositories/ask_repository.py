@@ -312,6 +312,7 @@ class AskRepository:
                  FROM selected_answer s
                  JOIN question_bank_revision_visuals l
                    ON l.revision_id=s.approved_revision_id
+                  AND l.role='answer'
                  JOIN rag_visuals v ON v.id=l.visual_id AND v.visual_id=$3
                  WHERE v.review_status='approved'
                )
@@ -363,6 +364,7 @@ class AskRepository:
                  FROM selected_answer s
                  JOIN question_bank_revision_visuals l
                    ON l.revision_id=s.approved_revision_id
+                  AND l.role='answer'
                  JOIN rag_visuals v ON v.id=l.visual_id AND v.visual_id=$3
                  WHERE v.review_status='approved'
                    AND v.display_policy IN ('always','llm_decide')
@@ -407,6 +409,7 @@ class AskRepository:
                  FROM selected_answer s
                  JOIN question_bank_revision_visuals l
                    ON l.revision_id=s.approved_revision_id
+                  AND l.role='answer'
                  JOIN rag_visuals v ON v.id=l.visual_id
                  WHERE v.visual_id=ANY($2::text[])
                    AND v.review_status='approved'

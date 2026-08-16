@@ -36,7 +36,8 @@ class ApprovedQuestionInput(StrictModel):
     blocks: list[AnswerBlock] = Field(min_length=1, max_length=120)
     mcq_options: list[McqOptionInput] = Field(default_factory=list, max_length=12)
     citation_ids: list[UUID] = Field(default_factory=list, max_length=20)
-    visual_ids: list[str] = Field(default_factory=list, max_length=20)
+    question_visual_ids: list[str] = Field(default_factory=list, max_length=20)
+    answer_visual_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_mcq(self):
@@ -49,15 +50,17 @@ class ApprovedQuestionInput(StrictModel):
             raise ValueError("MCQ_OPTIONS_FORBIDDEN")
         if len(self.citation_ids) != len(set(self.citation_ids)):
             raise ValueError("CITATION_LINK_DUPLICATE")
-        if len(self.visual_ids) != len(set(self.visual_ids)):
-            raise ValueError("VISUAL_LINK_DUPLICATE")
+        if len(self.question_visual_ids) != len(set(self.question_visual_ids)):
+            raise ValueError("QUESTION_VISUAL_LINK_DUPLICATE")
+        if len(self.answer_visual_ids) != len(set(self.answer_visual_ids)):
+            raise ValueError("ANSWER_VISUAL_LINK_DUPLICATE")
         visual_refs = [
             item.visual_id for item in self.blocks if isinstance(item, VisualRefBlock)
         ]
         if len(visual_refs) != len(set(visual_refs)):
             raise ValueError("VISUAL_BLOCK_DUPLICATE")
-        if set(visual_refs) != set(self.visual_ids):
-            raise ValueError("VISUAL_BLOCK_LINK_MISMATCH")
+        if set(visual_refs) != set(self.answer_visual_ids):
+            raise ValueError("ANSWER_VISUAL_BLOCK_LINK_MISMATCH")
         if any(
             isinstance(item, EquationBlock)
             and any(
@@ -139,7 +142,8 @@ class BulkImportQuestionInput(StrictModel):
     options: list[str] = Field(default_factory=list, max_length=12)
     correct_answer: str | None = Field(default=None, max_length=1000)
     answer_blocks: list[AnswerBlock] = Field(default_factory=list, max_length=120)
-    visual_ids: list[str] = Field(default_factory=list, max_length=20)
+    question_visual_ids: list[str] = Field(default_factory=list, max_length=20)
+    answer_visual_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @property
     def resolved_marks(self) -> float:
@@ -147,8 +151,10 @@ class BulkImportQuestionInput(StrictModel):
 
     @model_validator(mode="after")
     def validate_question(self):
-        if len(self.visual_ids) != len(set(self.visual_ids)):
-            raise ValueError("VISUAL_LINK_DUPLICATE")
+        if len(self.question_visual_ids) != len(set(self.question_visual_ids)):
+            raise ValueError("QUESTION_VISUAL_LINK_DUPLICATE")
+        if len(self.answer_visual_ids) != len(set(self.answer_visual_ids)):
+            raise ValueError("ANSWER_VISUAL_LINK_DUPLICATE")
         visual_refs = [
             item.visual_id
             for item in self.answer_blocks
@@ -156,8 +162,8 @@ class BulkImportQuestionInput(StrictModel):
         ]
         if len(visual_refs) != len(set(visual_refs)):
             raise ValueError("VISUAL_BLOCK_DUPLICATE")
-        if set(visual_refs) - set(self.visual_ids):
-            raise ValueError("VISUAL_BLOCK_LINK_MISMATCH")
+        if set(visual_refs) - set(self.answer_visual_ids):
+            raise ValueError("ANSWER_VISUAL_BLOCK_LINK_MISMATCH")
         if any(
             isinstance(item, EquationBlock)
             and any(
@@ -206,7 +212,7 @@ class BulkImportQuestionInput(StrictModel):
         # adding canonical references for any selected existing visuals.
         blocks.extend(
             {"type": "visual_ref", "visual_id": visual_id}
-            for visual_id in self.visual_ids
+            for visual_id in self.answer_visual_ids
             if visual_id not in block_visual_ids
         )
         if self.type == "mcq" and not blocks:
@@ -232,7 +238,8 @@ class BulkImportQuestionInput(StrictModel):
                 )
                 for index, option in enumerate(self.options)
             ],
-            visual_ids=self.visual_ids,
+            question_visual_ids=self.question_visual_ids,
+            answer_visual_ids=self.answer_visual_ids,
         )
 
 
@@ -291,7 +298,8 @@ class AskAdminRequest(StrictModel):
     provider: str | None = Field(default=None, max_length=120)
     bank_source: str | None = Field(default=None, max_length=120)
     age_days: int | None = Field(default=None, ge=0, le=3650)
-    visual_ids: list[str] = Field(default_factory=list, max_length=20)
+    question_visual_ids: list[str] = Field(default_factory=list, max_length=20)
+    answer_visual_ids: list[str] = Field(default_factory=list, max_length=20)
     approved_question: ApprovedQuestionInput | None = None
     import_key: str | None = Field(default=None, max_length=200)
     import_questions: list[BulkImportQuestionInput] = Field(

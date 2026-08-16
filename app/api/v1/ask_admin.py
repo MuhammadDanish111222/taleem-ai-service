@@ -105,10 +105,20 @@ async def _create_approved(
     actor_id: str,
     source: str,
 ) -> str:
+    if source == "generated_candidate" and value.question_visual_ids:
+        raise ValueError("CANDIDATE_QUESTION_VISUALS_FORBIDDEN")
     normalized = normalize_question(value.question)
-    visual_rows = await _visual_row_ids(
+    question_visual_rows = await _visual_row_ids(
         conn,
-        value.visual_ids,
+        value.question_visual_ids,
+        board_id=value.board_id,
+        class_id=value.class_id,
+        subject_id=value.subject_id,
+        chapter_id=value.chapter_id,
+    )
+    answer_visual_rows = await _visual_row_ids(
+        conn,
+        value.answer_visual_ids,
         board_id=value.board_id,
         class_id=value.class_id,
         subject_id=value.subject_id,
@@ -131,7 +141,8 @@ async def _create_approved(
         blocks=[item.model_dump() for item in value.blocks],
         source=source,
         citation_chunk_ids=citation_ids,
-        visual_row_ids=visual_rows,
+        question_visual_row_ids=question_visual_rows,
+        answer_visual_row_ids=answer_visual_rows,
         mcq_options=[item.model_dump() for item in value.mcq_options],
     )
 
@@ -634,7 +645,15 @@ async def ask_admin(
                         try:
                             await _visual_row_ids(
                                 conn,
-                                item.visual_ids,
+                                item.question_visual_ids,
+                                board_id=item.board_id,
+                                class_id=item.class_id,
+                                subject_id=item.subject_id,
+                                chapter_id=item.chapter_id,
+                            )
+                            await _visual_row_ids(
+                                conn,
+                                item.answer_visual_ids,
                                 board_id=item.board_id,
                                 class_id=item.class_id,
                                 subject_id=item.subject_id,
@@ -803,16 +822,24 @@ async def ask_admin(
                 revision = await bank.get_revision(revision_id)
                 if revision is None:
                     raise LookupError("REVISION_NOT_FOUND")
-                referenced_visuals = {
+                referenced_answer_visuals = {
                     block["visual_id"]
                     for block in revision.blocks
                     if block.get("type") == "visual_ref"
                 }
-                if referenced_visuals != set(request.visual_ids):
-                    raise ValueError("VISUAL_BLOCK_LINK_MISMATCH")
-                visual_rows = await _visual_row_ids(
+                if referenced_answer_visuals != set(request.answer_visual_ids):
+                    raise ValueError("ANSWER_VISUAL_BLOCK_LINK_MISMATCH")
+                question_visual_rows = await _visual_row_ids(
                     conn,
-                    request.visual_ids,
+                    request.question_visual_ids,
+                    board_id=revision.board_id,
+                    class_id=revision.class_id,
+                    subject_id=revision.subject_id,
+                    chapter_id=revision.chapter_id,
+                )
+                answer_visual_rows = await _visual_row_ids(
+                    conn,
+                    request.answer_visual_ids,
                     board_id=revision.board_id,
                     class_id=revision.class_id,
                     subject_id=revision.subject_id,
@@ -820,14 +847,16 @@ async def ask_admin(
                 )
                 async with conn.transaction():
                     await bank.set_visual_links(
-                        revision_id=revision_id, visual_row_ids=visual_rows
+                        revision_id=revision_id,
+                        question_visual_row_ids=question_visual_rows,
+                        answer_visual_row_ids=answer_visual_rows,
                     )
                     await AuditRepository(conn).create_audit_log(
                         actor_id=auth.uid,
                         action="bank.visual_links_changed",
                         target_type="question_revision",
                         target_id=revision_id,
-                        after_value={"visual_ids": request.visual_ids},
+                        after_value={"question_visual_ids": request.question_visual_ids, "answer_visual_ids": request.answer_visual_ids},
                     )
                 return {"status": "updated"}
     except LookupError as exc:

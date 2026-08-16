@@ -23,7 +23,8 @@ class ApprovedBankAnswer:
     answer_style: str
     blocks: tuple[dict[str, Any], ...]
     citations: tuple[dict[str, Any], ...]
-    visuals: tuple[dict[str, Any], ...]
+    question_visuals: tuple[dict[str, Any], ...]
+    answer_visuals: tuple[dict[str, Any], ...]
 
 
 class QuestionBankRepository:
@@ -42,11 +43,12 @@ class QuestionBankRepository:
             revision_id,
         )
         visual_rows = await self.conn.fetch(
-            """SELECT v.visual_id, v.title, v.description, v.display_policy,
+            """SELECT l.role, v.visual_id, v.title, v.description, v.display_policy,
                       l.display_order
                FROM question_bank_revision_visuals l
                JOIN rag_visuals v ON v.id=l.visual_id
                WHERE l.revision_id=$1::uuid
+                 AND l.role IN ('question','answer')
                  AND v.review_status='approved'
                  AND v.display_policy IN ('always','llm_decide')
                ORDER BY l.display_order, v.visual_id""",
@@ -65,7 +67,8 @@ class QuestionBankRepository:
             answer_style=row["answer_style"],
             blocks=tuple(blocks),
             citations=tuple(dict(item) for item in citation_rows),
-            visuals=tuple(dict(item) for item in visual_rows),
+            question_visuals=tuple({key: value for key, value in dict(item).items() if key != "role"} for item in visual_rows if item["role"] == "question"),
+            answer_visuals=tuple({key: value for key, value in dict(item).items() if key != "role"} for item in visual_rows if item["role"] == "answer"),
         )
 
     @staticmethod
@@ -261,7 +264,8 @@ class QuestionBankRepository:
         source: str,
         question_id: str | None = None,
         citation_chunk_ids: Iterable[str] = (),
-        visual_row_ids: Iterable[str] = (),
+        question_visual_row_ids: Iterable[str] = (),
+        answer_visual_row_ids: Iterable[str] = (),
         mcq_options: Iterable[dict[str, Any]] = (),
     ) -> str:
         if question_id is None:
@@ -323,15 +327,17 @@ class QuestionBankRepository:
                 chunk_id,
                 order,
             )
-        for order, visual_id in enumerate(visual_row_ids):
-            await self.conn.execute(
-                """INSERT INTO question_bank_revision_visuals(
-                     revision_id,visual_id,display_order
-                   ) VALUES($1::uuid,$2::uuid,$3)""",
-                revision_id,
-                visual_id,
-                order,
-            )
+        for role, visual_row_ids in (("question", question_visual_row_ids), ("answer", answer_visual_row_ids)):
+            for order, visual_id in enumerate(visual_row_ids):
+                await self.conn.execute(
+                    """INSERT INTO question_bank_revision_visuals(
+                         revision_id,visual_id,role,display_order
+                       ) VALUES($1::uuid,$2::uuid,$3,$4)""",
+                    revision_id,
+                    visual_id,
+                    role,
+                    order,
+                )
         for order, option in enumerate(mcq_options):
             await self.conn.execute(
                 """INSERT INTO question_bank_mcq_options(
@@ -537,7 +543,7 @@ class QuestionBankRepository:
             raise ValueError("EMBEDDING_TARGET_NOT_ACTIVE")
 
     async def set_visual_links(
-        self, *, revision_id: str, visual_row_ids: list[str]
+        self, *, revision_id: str, question_visual_row_ids: list[str], answer_visual_row_ids: list[str]
     ) -> None:
         exists = await self.conn.fetchval(
             """SELECT EXISTS(
@@ -548,28 +554,31 @@ class QuestionBankRepository:
         )
         if not exists:
             raise ValueError("APPROVED_REVISION_NOT_FOUND")
-        if visual_row_ids:
+        all_visual_row_ids = question_visual_row_ids + answer_visual_row_ids
+        if all_visual_row_ids:
             eligible = await self.conn.fetchval(
                 """SELECT COUNT(*) FROM rag_visuals
                    WHERE id=ANY($1::uuid[]) AND review_status='approved'
                      AND display_policy IN ('always','llm_decide')""",
-                visual_row_ids,
+                all_visual_row_ids,
             )
-            if eligible != len(set(visual_row_ids)):
+            if eligible != len(set(all_visual_row_ids)):
                 raise ValueError("VISUAL_LINK_NOT_REVIEWED")
         await self.conn.execute(
             "DELETE FROM question_bank_revision_visuals WHERE revision_id=$1::uuid",
             revision_id,
         )
-        for order, visual_id in enumerate(visual_row_ids):
-            await self.conn.execute(
-                """INSERT INTO question_bank_revision_visuals(
-                     revision_id,visual_id,display_order
-                   ) VALUES($1::uuid,$2::uuid,$3)""",
-                revision_id,
-                visual_id,
-                order,
-            )
+        for role, visual_row_ids in (("question", question_visual_row_ids), ("answer", answer_visual_row_ids)):
+            for order, visual_id in enumerate(visual_row_ids):
+                await self.conn.execute(
+                    """INSERT INTO question_bank_revision_visuals(
+                         revision_id,visual_id,role,display_order
+                       ) VALUES($1::uuid,$2::uuid,$3,$4)""",
+                    revision_id,
+                    visual_id,
+                    role,
+                    order,
+                )
 
     async def cleanup_chapter_qa(
         self,

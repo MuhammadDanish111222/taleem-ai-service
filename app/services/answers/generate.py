@@ -639,7 +639,7 @@ class AskService:
             answer_source=AnswerSource.APPROVED_BANK.value,
             blocks=list(approved.blocks),
             citations=list(approved.citations),
-            visual_ids=[item["visual_id"] for item in approved.visuals],
+            visual_ids=[item["visual_id"] for item in approved.answer_visuals],
             prompt_version="approved-bank",
             corpus_version_id=None,
             provider=None,
@@ -660,7 +660,7 @@ class AskService:
             answer_style=request.answer_style,
             blocks=_BLOCKS.validate_python(list(approved.blocks)),
             citations=[CitationDto.model_validate(item) for item in approved.citations],
-            visuals=[VisualDto.model_validate(item) for item in approved.visuals],
+            visuals=[VisualDto.model_validate(item) for item in approved.answer_visuals],
             general_ai_label=None,
             prompt_version=None,
             corpus_version=None,
@@ -716,7 +716,7 @@ class AskService:
                         CitationDto.model_validate(item) for item in approved.citations
                     ],
                     visuals=[
-                        VisualDto.model_validate(item) for item in approved.visuals
+                        VisualDto.model_validate(item) for item in approved.answer_visuals
                     ],
                     approved_revision_id=approved.revision_id,
                     usage=self._usage_dto(reservation),
