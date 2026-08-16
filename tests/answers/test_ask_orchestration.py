@@ -331,7 +331,7 @@ async def test_approved_visual_is_rehydrated_on_idempotent_replay(conn):
             {"type": "visual_ref", "visual_id": visual["visual_id"]},
         ],
         source="admin_authored",
-        visual_row_ids=[str(visual["id"])],
+        answer_visual_row_ids=[str(visual["id"])],
     )
     service = AskService(
         conn,
