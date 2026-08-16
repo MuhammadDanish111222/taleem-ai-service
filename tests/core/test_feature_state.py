@@ -200,6 +200,30 @@ async def test_feature_state_endpoint_success():
         patch(
             "app.api.v1.feature_state.RuntimeSettingsService.get",
             new_callable=AsyncMock,
+            return_value="enabled",
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get(
+                "/api/v1/internal/feature-state/multiple_ask",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 200
+            assert response.json() == {
+                "feature": "multiple_ask",
+                "state": "enabled",
+            }
+
+
+async def test_feature_state_endpoint_coming_soon():
+    token = create_token(feature="feature_state_read")
+    with (
+        patch("app.api.v1.feature_state.get_db_connection", mock_db_conn),
+        patch(
+            "app.api.v1.feature_state.RuntimeSettingsService.get",
+            new_callable=AsyncMock,
             return_value="coming_soon",
         ),
     ):
@@ -214,6 +238,30 @@ async def test_feature_state_endpoint_success():
             assert response.json() == {
                 "feature": "multiple_ask",
                 "state": "coming_soon",
+            }
+
+
+async def test_feature_state_endpoint_corrupted_value_fails_closed():
+    token = create_token(feature="feature_state_read")
+    with (
+        patch("app.api.v1.feature_state.get_db_connection", mock_db_conn),
+        patch(
+            "app.api.v1.feature_state.RuntimeSettingsService.get",
+            new_callable=AsyncMock,
+            return_value="unexpected_value",
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get(
+                "/api/v1/internal/feature-state/multiple_ask",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 200
+            assert response.json() == {
+                "feature": "multiple_ask",
+                "state": "disabled",
             }
 
 

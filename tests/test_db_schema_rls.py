@@ -215,6 +215,7 @@ ALL_TABLES = [
     "multiple_ask_normalized_sources",
     "multiple_ask_mcq_batches",
     "board_paper_blueprints",
+    "operational_events",
 ]
 
 
