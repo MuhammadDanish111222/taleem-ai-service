@@ -57,7 +57,7 @@ async def test_migrations_execution_and_idempotency():
         assert "0018_module6_selector_stable_order.sql" in versions
         assert "0019_module6_ephemeral_test_generation.sql" in versions
         assert "0020_question_answer_visual_roles.sql" in versions
-        assert "0021_operations_dashboard.sql" in versions
+        assert "0021_module6_test_paper_visuals.sql" in versions
         assert "0022_runtime_settings.sql" in versions
         assert "0023_operational_events.sql" in versions
         assert "0024_feature_state.sql" in versions
