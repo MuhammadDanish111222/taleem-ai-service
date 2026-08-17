@@ -67,6 +67,12 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $PYTEST_EXIT
           fi
+      - name: Upload pytest log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log
+          path: pytest.log
 
   postgresql-redis-worker-tests:
     name: real PostgreSQL/Redis worker tests
