@@ -55,7 +55,7 @@ jobs:
       - name: Check migration from an empty pgvector database
         run: uv run python scripts/migrate.py
       - name: Run pytest test suite
-        run: uv run python -m pytest -v
+        run: uv run python -m pytest -v --tb=short
 
   postgresql-redis-worker-tests:
     name: real PostgreSQL/Redis worker tests
