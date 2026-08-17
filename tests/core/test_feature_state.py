@@ -59,6 +59,7 @@ def mock_auth_env(monkeypatch):
     monkeypatch.setattr(
         "app.core.internal_auth._record_jti_postgres", AsyncMock(return_value=True)
     )
+    monkeypatch.setattr("app.core.internal_auth._jti_hash", lambda jti: "a" * 64)
 
 
 @asynccontextmanager
