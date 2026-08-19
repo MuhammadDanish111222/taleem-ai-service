@@ -109,6 +109,51 @@ class GeminiOCRProvider:
         b64_image = base64.b64encode(image_bytes).decode("ascii")
         resolved_mime = _detect_mime_type(image_bytes, mime_type)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={api_key}"
+        schema = {
+            "type": "OBJECT",
+            "required": ["questions"],
+            "properties": {
+                "questions": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "required": [
+                            "display_label",
+                            "question_text",
+                            "answer_mode",
+                            "mcq_options",
+                        ],
+                        "properties": {
+                            "display_label": {"type": "STRING"},
+                            "section_context": {
+                                "type": "STRING",
+                                "nullable": True,
+                            },
+                            "question_text": {"type": "STRING"},
+                            "answer_mode": {
+                                "type": "STRING",
+                                "enum": ["mcq", "short", "long", "not_clear"],
+                            },
+                            "mcq_options": {
+                                "type": "ARRAY",
+                                "items": {
+                                    "type": "OBJECT",
+                                    "required": ["label", "text"],
+                                    "properties": {
+                                        "label": {"type": "STRING"},
+                                        "text": {"type": "STRING"},
+                                    },
+                                },
+                            },
+                            "unclear_reason": {
+                                "type": "STRING",
+                                "nullable": True,
+                            },
+                        },
+                    },
+                },
+            },
+        }
         payload: dict[str, Any] = {
             "contents": [
                 {
@@ -138,58 +183,7 @@ class GeminiOCRProvider:
             ],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "responseJsonSchema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["questions"],
-                    "properties": {
-                        "questions": {
-                            "type": "array",
-                            "maxItems": 60,
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "required": [
-                                    "display_label",
-                                    "section_context",
-                                    "question_text",
-                                    "answer_mode",
-                                    "mcq_options",
-                                    "unclear_reason",
-                                ],
-                                "properties": {
-                                    "display_label": {"type": "string"},
-                                    "section_context": {
-                                        "type": "string",
-                                        "nullable": True,
-                                    },
-                                    "question_text": {"type": "string"},
-                                    "answer_mode": {
-                                        "type": "string",
-                                        "enum": ["mcq", "short", "long", "not_clear"],
-                                    },
-                                    "mcq_options": {
-                                        "type": "array",
-                                        "maxItems": 12,
-                                        "items": {
-                                            "type": "object",
-                                            "additionalProperties": False,
-                                            "required": ["label", "text"],
-                                            "properties": {
-                                                "label": {"type": "string"},
-                                                "text": {"type": "string"},
-                                            },
-                                        },
-                                    },
-                                    "unclear_reason": {
-                                        "type": "string",
-                                        "nullable": True,
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
+                "responseSchema": schema,
             },
         }
         data = await self._post(url, payload)
