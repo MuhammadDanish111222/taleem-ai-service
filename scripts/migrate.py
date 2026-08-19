@@ -1,24 +1,22 @@
+import asyncio
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-import asyncio
-
-import asyncpg
-
 from dotenv import load_dotenv
 
-load_dotenv()
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.db.migrator import run_migrations
+import asyncpg  # noqa: E402
+
+from app.db.migrator import run_migrations  # noqa: E402
 
 
 async def main():
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        print("DATABASE_URL not found in environment or .env")
-        sys.exit(1)
+    load_dotenv()
+    db_url = os.getenv(
+        "DATABASE_URL",
+        "postgresql://postgres:postgrespassword@localhost:5432/taleem_dev",
+    )
     conn = await asyncpg.connect(db_url, statement_cache_size=0)
     try:
         await run_migrations(conn)

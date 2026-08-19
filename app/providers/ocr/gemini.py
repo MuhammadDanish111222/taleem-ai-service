@@ -271,15 +271,23 @@ class GeminiOCRProvider:
             logger.error("Gemini OCR transport exception: %s", exc)
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
         if response.status_code in (401, 403):
-            logger.error("Gemini OCR auth error (%s): %s", response.status_code, response.text)
+            logger.error(
+                "Gemini OCR auth error (%s): %s", response.status_code, response.text
+            )
             raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
         if response.status_code != 200:
-            logger.error("Gemini OCR API error (%s): %s", response.status_code, response.text)
+            logger.error(
+                "Gemini OCR API error (%s): %s", response.status_code, response.text
+            )
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
         try:
             return response.json()
         except Exception as exc:
-            logger.error("Gemini OCR JSON decode error: %s (raw response: %s)", exc, response.text)
+            logger.error(
+                "Gemini OCR JSON decode error: %s (raw response: %s)",
+                exc,
+                response.text,
+            )
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
 
     @staticmethod
