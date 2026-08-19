@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from typing import Any
 
@@ -11,6 +12,8 @@ import httpx
 
 from app.core.config import get_settings
 from app.providers.ocr.base import OCRExtractedQuestion, OCRProviderError
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_OCR_MODEL = "gemini-3.6-flash"
 
@@ -156,7 +159,10 @@ class GeminiOCRProvider:
                                 ],
                                 "properties": {
                                     "display_label": {"type": "string"},
-                                    "section_context": {"type": ["string", "null"]},
+                                    "section_context": {
+                                        "type": "string",
+                                        "nullable": True,
+                                    },
                                     "question_text": {"type": "string"},
                                     "answer_mode": {
                                         "type": "string",
@@ -175,7 +181,10 @@ class GeminiOCRProvider:
                                             },
                                         },
                                     },
-                                    "unclear_reason": {"type": ["string", "null"]},
+                                    "unclear_reason": {
+                                        "type": "string",
+                                        "nullable": True,
+                                    },
                                 },
                             },
                         },
@@ -256,16 +265,21 @@ class GeminiOCRProvider:
                 async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                     response = await client.post(url, json=payload)
         except httpx.TimeoutException:
+            logger.error("Gemini OCR request timed out")
             raise OCRProviderError("MULTIPLE_ASK_OCR_TIMEOUT", retryable=True)
-        except Exception:
+        except Exception as exc:
+            logger.error("Gemini OCR transport exception: %s", exc)
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
         if response.status_code in (401, 403):
+            logger.error("Gemini OCR auth error (%s): %s", response.status_code, response.text)
             raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
         if response.status_code != 200:
+            logger.error("Gemini OCR API error (%s): %s", response.status_code, response.text)
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
         try:
             return response.json()
-        except Exception:
+        except Exception as exc:
+            logger.error("Gemini OCR JSON decode error: %s (raw response: %s)", exc, response.text)
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
 
     @staticmethod

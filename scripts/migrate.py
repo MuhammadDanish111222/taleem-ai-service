@@ -7,14 +7,19 @@ import asyncio
 
 import asyncpg
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from app.db.migrator import run_migrations
 
 
 async def main():
-    db_url = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/taleem_dev"
-    )
-    conn = await asyncpg.connect(db_url)
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        print("DATABASE_URL not found in environment or .env")
+        sys.exit(1)
+    conn = await asyncpg.connect(db_url, statement_cache_size=0)
     try:
         await run_migrations(conn)
     finally:
