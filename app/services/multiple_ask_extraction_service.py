@@ -601,12 +601,29 @@ class MultipleAskExtractionService:
             )
         return "needs_correction" if needs else "ready_to_answer"
 
-    async def mark_queue_failure(self, session_id: str) -> None:
-        """Reflect exhausted shared-queue retries in the separate business state."""
+    async def mark_queue_failure(
+        self, session_id: str, *, queue_error_code: str | None = None
+    ) -> None:
+        """Reflect exhausted shared-queue retries in the separate business state.
+
+        Keep the student-visible terminal reason deliberately small and stable.
+        Queue errors otherwise contain implementation details that must not be
+        exposed through the polling DTO.
+        """
+        safe_code = (
+            queue_error_code
+            if queue_error_code
+            in {
+                "MULTIPLE_ASK_OCR_TIMEOUT",
+                "MULTIPLE_ASK_OCR_UNAVAILABLE",
+                "MULTIPLE_ASK_OCR_FAILED",
+            }
+            else "MULTIPLE_ASK_EXTRACTION_FAILED"
+        )
         await self.fail_and_refund(
             session_id=session_id,
             workflow_status="failed",
-            error_code="MULTIPLE_ASK_EXTRACTION_FAILED",
+            error_code=safe_code,
         )
 
     async def fail_and_refund(

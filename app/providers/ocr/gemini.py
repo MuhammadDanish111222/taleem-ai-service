@@ -42,7 +42,7 @@ class GeminiOCRProvider:
         *,
         api_key: str | None = None,
         model: str | None = None,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = 90.0,
         client: httpx.AsyncClient | None = None,
     ):
         settings = get_settings()

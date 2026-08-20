@@ -282,7 +282,8 @@ class Worker:
                     and isinstance(session_id, str)
                 ):
                     await MultipleAskExtractionService(conn).mark_queue_failure(
-                        session_id
+                        session_id,
+                        queue_error_code=failed.get("error_code"),
                     )
                 if (
                     job_type == "multiple_ask_answer"

@@ -62,7 +62,11 @@ class Settings(BaseSettings):
     # This is a hard safety ceiling, not merely a UI preference. Deployments
     # may choose a lower value but cannot increase a student paper past 60.
     MULTIPLE_ASK_MAX_EXTRACTED_QUESTIONS: int = Field(default=60, ge=1, le=60)
-    MULTIPLE_ASK_OCR_TIMEOUT_SECONDS: int = 20
+    # Gemini structured OCR can take longer than a conventional text request,
+    # particularly for a high-resolution exam-paper image.  The runtime
+    # setting remains authoritative, but keep the environment default aligned
+    # with the safe production default used for a missing runtime row.
+    MULTIPLE_ASK_OCR_TIMEOUT_SECONDS: int = 90
     # PDF page dimensions are attacker-controlled. Rendering one page at a
     # time is not sufficient unless its rendered pixel count is bounded too.
     MULTIPLE_ASK_MAX_RENDERED_PDF_PAGE_PIXELS: int = 12_000_000
