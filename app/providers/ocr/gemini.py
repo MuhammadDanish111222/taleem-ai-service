@@ -193,13 +193,17 @@ class GeminiOCRProvider:
             text = self._candidate_text(data)
             cleaned_text = text.strip()
             if cleaned_text.startswith("```"):
-                cleaned_text = re.sub(r"^```(?:json)?\s*", "", cleaned_text, flags=re.IGNORECASE)
+                cleaned_text = re.sub(
+                    r"^```(?:json)?\s*", "", cleaned_text, flags=re.IGNORECASE
+                )
                 cleaned_text = re.sub(r"\s*```$", "", cleaned_text)
             cleaned_text = cleaned_text.strip()
             decoded = json.loads(cleaned_text)
             questions = decoded.get("questions") if isinstance(decoded, dict) else None
             if not isinstance(questions, list):
-                raise ValueError("JSON response does not contain a valid 'questions' array")
+                raise ValueError(
+                    "JSON response does not contain a valid 'questions' array"
+                )
             output: list[OCRExtractedQuestion] = []
             for idx, question in enumerate(questions):
                 if not isinstance(question, dict):
@@ -209,7 +213,9 @@ class GeminiOCRProvider:
                 if section_context is not None:
                     section_context = str(section_context).strip() or None
                 question_text = str(question.get("question_text") or "").strip()
-                answer_mode = str(question.get("answer_mode") or "short").strip().lower()
+                answer_mode = (
+                    str(question.get("answer_mode") or "short").strip().lower()
+                )
                 if answer_mode not in {"mcq", "short", "long", "not_clear"}:
                     answer_mode = "short"
 
@@ -218,10 +224,16 @@ class GeminiOCRProvider:
                 if isinstance(raw_options, list):
                     for opt_idx, opt in enumerate(raw_options):
                         if isinstance(opt, dict):
-                            label = str(opt.get("label") or chr(ord("A") + opt_idx)).strip().upper()
+                            label = (
+                                str(opt.get("label") or chr(ord("A") + opt_idx))
+                                .strip()
+                                .upper()
+                            )
                             text_val = str(opt.get("text") or "").strip()
                             if text_val:
-                                parsed_options.append({"label": label, "text": text_val})
+                                parsed_options.append(
+                                    {"label": label, "text": text_val}
+                                )
 
                 unclear_reason = question.get("unclear_reason")
                 if unclear_reason is not None:
@@ -257,10 +269,14 @@ class GeminiOCRProvider:
                         url, json=payload, timeout=self._timeout_seconds
                     )
                 else:
-                    async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+                    async with httpx.AsyncClient(
+                        timeout=self._timeout_seconds
+                    ) as client:
                         response = await client.post(url, json=payload)
             except httpx.TimeoutException:
-                logger.error("Gemini OCR request timed out (timeout: %ss)", self._timeout_seconds)
+                logger.error(
+                    "Gemini OCR request timed out (timeout: %ss)", self._timeout_seconds
+                )
                 raise OCRProviderError("MULTIPLE_ASK_OCR_TIMEOUT", retryable=True)
             except Exception as exc:
                 logger.error("Gemini OCR transport exception: %s", exc)
@@ -268,7 +284,9 @@ class GeminiOCRProvider:
 
             if response.status_code in (401, 403):
                 logger.error(
-                    "Gemini OCR auth error (%s): %s", response.status_code, response.text
+                    "Gemini OCR auth error (%s): %s",
+                    response.status_code,
+                    response.text,
                 )
                 raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
 

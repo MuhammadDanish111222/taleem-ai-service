@@ -515,7 +515,9 @@ class MultipleAskExtractionService:
     def _validated_structured_item(
         item: OCRExtractedQuestion, source_order: int, page_number: int
     ) -> ExtractedQuestion:
-        display_label = item.display_label.strip() if item.display_label else str(source_order + 1)
+        display_label = (
+            item.display_label.strip() if item.display_label else str(source_order + 1)
+        )
         options = [
             {"label": option["label"].upper().strip(), "text": option["text"].strip()}
             for option in item.mcq_options
@@ -539,7 +541,13 @@ class MultipleAskExtractionService:
                 {"page_number": page_number, "display_label": display_label},
             )
         section_mode = _structured_section_mode(item.section_context)
-        expected = section_mode or ("mcq" if options else item.answer_mode if item.answer_mode in {"short", "long"} else "short")
+        expected = section_mode or (
+            "mcq"
+            if options
+            else item.answer_mode
+            if item.answer_mode in {"short", "long"}
+            else "short"
+        )
         if options and not _valid_dynamic_options(options):
             raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
         if (
