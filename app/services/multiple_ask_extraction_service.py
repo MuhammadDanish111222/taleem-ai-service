@@ -515,30 +515,31 @@ class MultipleAskExtractionService:
     def _validated_structured_item(
         item: OCRExtractedQuestion, source_order: int, page_number: int
     ) -> ExtractedQuestion:
+        display_label = item.display_label.strip() if item.display_label else str(source_order + 1)
         options = [
             {"label": option["label"].upper().strip(), "text": option["text"].strip()}
             for option in item.mcq_options
         ]
-        if not item.display_label or item.answer_mode not in {
+        if item.answer_mode not in {
             "short",
             "long",
             "mcq",
             "not_clear",
         }:
             raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
-        if item.answer_mode == "not_clear":
+        if item.answer_mode == "not_clear" or not item.question_text:
             return ExtractedQuestion(
                 source_order,
-                item.display_label,
+                display_label,
                 item.section_context,
-                item.question_text,
+                item.question_text or "",
                 "not_clear",
                 (),
                 item.unclear_reason or "QUESTION_TEXT_UNCLEAR",
-                {"page_number": page_number, "display_label": item.display_label},
+                {"page_number": page_number, "display_label": display_label},
             )
         section_mode = _structured_section_mode(item.section_context)
-        expected = section_mode or ("mcq" if options else "short")
+        expected = section_mode or ("mcq" if options else item.answer_mode if item.answer_mode in {"short", "long"} else "short")
         if options and not _valid_dynamic_options(options):
             raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
         if (
@@ -549,13 +550,13 @@ class MultipleAskExtractionService:
             raise MultipleAskExtractionError("MULTIPLE_ASK_OCR_FAILED", status_code=503)
         return ExtractedQuestion(
             source_order,
-            item.display_label,
+            display_label,
             item.section_context,
             item.question_text,
             item.answer_mode,
             tuple(options),
             None,
-            {"page_number": page_number, "display_label": item.display_label},
+            {"page_number": page_number, "display_label": display_label},
         )
 
     async def _ocr_text(

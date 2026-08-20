@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -189,100 +191,115 @@ class GeminiOCRProvider:
         data = await self._post(url, payload)
         try:
             text = self._candidate_text(data)
-            decoded = json.loads(text)
-            questions = decoded["questions"]
+            cleaned_text = text.strip()
+            if cleaned_text.startswith("```"):
+                cleaned_text = re.sub(r"^```(?:json)?\s*", "", cleaned_text, flags=re.IGNORECASE)
+                cleaned_text = re.sub(r"\s*```$", "", cleaned_text)
+            cleaned_text = cleaned_text.strip()
+            decoded = json.loads(cleaned_text)
+            questions = decoded.get("questions") if isinstance(decoded, dict) else None
             if not isinstance(questions, list):
-                raise ValueError
+                raise ValueError("JSON response does not contain a valid 'questions' array")
             output: list[OCRExtractedQuestion] = []
-            for question in questions:
-                if not isinstance(question, dict) or set(question) != {
-                    "display_label",
-                    "section_context",
-                    "question_text",
-                    "answer_mode",
-                    "mcq_options",
-                    "unclear_reason",
-                }:
-                    raise ValueError
-                options = question["mcq_options"]
-                if not isinstance(options, list) or not all(
-                    isinstance(option, dict) and set(option) == {"label", "text"}
-                    for option in options
-                ):
-                    raise ValueError
-                if question["answer_mode"] not in {"mcq", "short", "long", "not_clear"}:
-                    raise ValueError
-                if not all(
-                    isinstance(question[key], str)
-                    for key in ("display_label", "question_text")
-                ):
-                    raise ValueError
-                if question["section_context"] is not None and not isinstance(
-                    question["section_context"], str
-                ):
-                    raise ValueError
-                if question["unclear_reason"] is not None and not isinstance(
-                    question["unclear_reason"], str
-                ):
-                    raise ValueError
+            for idx, question in enumerate(questions):
+                if not isinstance(question, dict):
+                    continue
+                display_label = str(question.get("display_label") or (idx + 1)).strip()
+                section_context = question.get("section_context")
+                if section_context is not None:
+                    section_context = str(section_context).strip() or None
+                question_text = str(question.get("question_text") or "").strip()
+                answer_mode = str(question.get("answer_mode") or "short").strip().lower()
+                if answer_mode not in {"mcq", "short", "long", "not_clear"}:
+                    answer_mode = "short"
+
+                raw_options = question.get("mcq_options")
+                parsed_options: list[dict[str, str]] = []
+                if isinstance(raw_options, list):
+                    for opt_idx, opt in enumerate(raw_options):
+                        if isinstance(opt, dict):
+                            label = str(opt.get("label") or chr(ord("A") + opt_idx)).strip().upper()
+                            text_val = str(opt.get("text") or "").strip()
+                            if text_val:
+                                parsed_options.append({"label": label, "text": text_val})
+
+                unclear_reason = question.get("unclear_reason")
+                if unclear_reason is not None:
+                    unclear_reason = str(unclear_reason).strip() or None
+
+                if not question_text and answer_mode != "not_clear":
+                    answer_mode = "not_clear"
+                    unclear_reason = unclear_reason or "QUESTION_TEXT_UNCLEAR"
+
                 output.append(
                     OCRExtractedQuestion(
-                        display_label=question["display_label"].strip(),
-                        section_context=question["section_context"].strip()
-                        if question["section_context"]
-                        else None,
-                        question_text=question["question_text"].strip(),
-                        answer_mode=question["answer_mode"],
-                        mcq_options=tuple(
-                            {
-                                "label": str(option["label"]).strip(),
-                                "text": str(option["text"]).strip(),
-                            }
-                            for option in options
-                        ),
-                        unclear_reason=question["unclear_reason"].strip()
-                        if question["unclear_reason"]
-                        else None,
+                        display_label=display_label,
+                        section_context=section_context,
+                        question_text=question_text,
+                        answer_mode=answer_mode,
+                        mcq_options=tuple(parsed_options),
+                        unclear_reason=unclear_reason,
                     )
                 )
+            if not output:
+                raise ValueError("No questions extracted from response")
             return tuple(output)
-        except Exception:
+        except Exception as exc:
+            logger.error("Gemini OCR structured extraction parse error: %s", exc)
             raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
 
     async def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            if self._client is not None:
-                response = await self._client.post(
-                    url, json=payload, timeout=self._timeout_seconds
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                if self._client is not None:
+                    response = await self._client.post(
+                        url, json=payload, timeout=self._timeout_seconds
+                    )
+                else:
+                    async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+                        response = await client.post(url, json=payload)
+            except httpx.TimeoutException:
+                logger.error("Gemini OCR request timed out (timeout: %ss)", self._timeout_seconds)
+                raise OCRProviderError("MULTIPLE_ASK_OCR_TIMEOUT", retryable=True)
+            except Exception as exc:
+                logger.error("Gemini OCR transport exception: %s", exc)
+                raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+
+            if response.status_code in (401, 403):
+                logger.error(
+                    "Gemini OCR auth error (%s): %s", response.status_code, response.text
                 )
-            else:
-                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                    response = await client.post(url, json=payload)
-        except httpx.TimeoutException:
-            logger.error("Gemini OCR request timed out")
-            raise OCRProviderError("MULTIPLE_ASK_OCR_TIMEOUT", retryable=True)
-        except Exception as exc:
-            logger.error("Gemini OCR transport exception: %s", exc)
-            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
-        if response.status_code in (401, 403):
-            logger.error(
-                "Gemini OCR auth error (%s): %s", response.status_code, response.text
-            )
-            raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
-        if response.status_code != 200:
-            logger.error(
-                "Gemini OCR API error (%s): %s", response.status_code, response.text
-            )
-            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
-        try:
-            return response.json()
-        except Exception as exc:
-            logger.error(
-                "Gemini OCR JSON decode error: %s (raw response: %s)",
-                exc,
-                response.text,
-            )
-            raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+                raise OCRProviderError("MULTIPLE_ASK_OCR_UNAVAILABLE", retryable=False)
+
+            if response.status_code in (503, 429) and attempt < max_attempts - 1:
+                logger.warning(
+                    "Gemini OCR temporary API status %s on attempt %s/%s. Retrying in %ss...",
+                    response.status_code,
+                    attempt + 1,
+                    max_attempts,
+                    (attempt + 1) * 2,
+                )
+                await asyncio.sleep((attempt + 1) * 2)
+                continue
+
+            if response.status_code != 200:
+                logger.error(
+                    "Gemini OCR API error (%s): %s", response.status_code, response.text
+                )
+                raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+
+            try:
+                return response.json()
+            except Exception as exc:
+                logger.error(
+                    "Gemini OCR JSON decode error: %s (raw response: %s)",
+                    exc,
+                    response.text,
+                )
+                raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
+
+        raise OCRProviderError("MULTIPLE_ASK_OCR_FAILED", retryable=True)
 
     @staticmethod
     def _candidate_text(data: dict[str, Any]) -> str:
