@@ -364,7 +364,7 @@ class MultipleAskExtractionService:
                 structured = await self._ocr_questions(raw, page_number=1)
                 normalized = self._structured_source_text(structured)
                 kind, locators, provider = (
-                    "image_structured_extraction",
+                    "image_ocr",
                     [{"page_number": 1, "source_kind": "ocr"}],
                     "gemini",
                 )
